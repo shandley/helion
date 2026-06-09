@@ -1,12 +1,16 @@
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from helion.io.fasta import read_windows
 from helion.io.gff3 import write_gff3
 from helion.signals.model import SignalModel
 from helion.homology.embed import ProteinEmbedder
 from helion.homology.align import score_exon_homology
-from helion._core import build_dag, viterbi_decode, PyGeneModel
+
+if TYPE_CHECKING:
+    from helion._core import PyGeneModel
 
 
 def predict(
@@ -19,6 +23,9 @@ def predict(
     batch_size: int = 4,
     threshold: float = 0.1,
 ) -> list[PyGeneModel]:
+    from helion._core import PyGeneModel as _PyGeneModel
+    from helion._core import build_dag, viterbi_decode
+
     _ = batch_size  # reserved for future batched window inference
     signal_model = SignalModel.load(model_weights, organism=organism, device=device)
 
@@ -28,7 +35,7 @@ def predict(
         embedder = ProteinEmbedder(device=device)
         protein_embedding = embedder.embed(protein.read_text().strip())
 
-    all_models: list[PyGeneModel] = []
+    all_models: list[_PyGeneModel] = []
 
     for window in read_windows(genome, window_size=10_000, overlap=500):
         scores = signal_model.score(window.sequence)
