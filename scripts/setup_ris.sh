@@ -16,10 +16,7 @@ BDGP="BDGP6.46"
 
 echo "=== Setting up Helion on RIS ==="
 
-# Directories
-mkdir -p "${DATA_DIR}" "${MODEL_DIR}" "${LOG_DIR}"
-
-# Clone or update repo
+# Clone or update repo (must happen before mkdir so clone target is clean)
 if [ -d "${HELION_ROOT}/.git" ]; then
     echo "Updating existing clone..."
     git -C "${HELION_ROOT}" pull --rebase
@@ -27,6 +24,9 @@ else
     echo "Cloning helion..."
     git clone https://github.com/shandley/helion.git "${HELION_ROOT}"
 fi
+
+# Directories (created after clone so they live inside the repo checkout)
+mkdir -p "${DATA_DIR}" "${MODEL_DIR}" "${LOG_DIR}"
 
 # Add pyfaidx to echobase-ml (idempotent)
 echo "Installing pyfaidx into echobase-ml..."
