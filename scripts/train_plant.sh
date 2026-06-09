@@ -29,7 +29,7 @@ export PYTHONPATH="${HELION_ROOT}/python"
 
 mkdir -p "${MODEL_OUT}" "${HELION_ROOT}/logs"
 
-git -C "${HELION_ROOT}" pull --rebase -q
+git -C "${HELION_ROOT}" fetch -q origin && git -C "${HELION_ROOT}" reset -q --hard origin/main
 
 python "${HELION_ROOT}/scripts/train_helion.py" \
     --annotations "${DATA_DIR}/arabidopsis.gff3" \
