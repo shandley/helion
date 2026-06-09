@@ -1,0 +1,46 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "helion"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26",
+    "pyfaidx>=0.8",
+]
+
+[project.scripts]
+helion = "helion.cli:main"
+
+[project.optional-dependencies]
+homology = [
+    "transformers>=4.38",
+    "fair-esm>=2.0",
+]
+dev = [
+    "ruff",
+    "pyright",
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "helion._core"
+features = ["pyo3/extension-module", "pyo3/abi3-py311"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "ANN"]
+ignore = ["ANN101", "ANN102"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+strict = true
+pythonPath = "./python"

@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Rust / maturin
+target/
+*.so
+*.dylib
+*.pyd
+
+# Models and data (large files, managed separately)
+models/*
+!models/.gitkeep
+data/*
+!data/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
