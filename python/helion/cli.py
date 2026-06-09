@@ -35,6 +35,11 @@ def main() -> None:
     train.add_argument("--lr", type=float, default=1e-4)
     train.add_argument("--device", default="cpu")
 
+    ev = subparsers.add_parser("evaluate", help="Evaluate predictions against a reference")
+    ev.add_argument("reference", type=Path, help="Reference annotation GFF3")
+    ev.add_argument("predictions", type=Path, help="Helion prediction GFF3")
+    ev.add_argument("genome", type=Path, help="Genome FASTA (must have .fai index)")
+
     args = parser.parse_args()
 
     if args.command == "predict":
@@ -59,6 +64,14 @@ def main() -> None:
             lr=args.lr,
             device=args.device,
         )
+    elif args.command == "evaluate":
+        from helion.evaluate import evaluate, format_report
+        result = evaluate(
+            ref_gff3=args.reference,
+            pred_gff3=args.predictions,
+            genome=args.genome,
+        )
+        print(format_report(result))
     else:
         parser.print_help()
         sys.exit(1)

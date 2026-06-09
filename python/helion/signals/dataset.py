@@ -7,9 +7,9 @@ from typing import Iterator
 import numpy as np
 import numpy.typing as npt
 import torch
+from pyfaidx import Fasta  # type: ignore[import]
 from torch.utils.data import Dataset
 
-from helion.io.fasta import read_sequence
 from helion.signals.model import N_CLASSES, _one_hot
 
 
@@ -69,6 +69,12 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     Each sample is a (one_hot_dna, label_tensor) pair where labels are
     per-position class indices matching the N_CLASSES output channels.
+
+    Val split is chromosome-level to prevent data leakage: if
+    val_chromosomes is given, all transcripts on those chromosomes go to
+    the validation set and are excluded from training. This is the
+    correct approach since windows from the same gene share sequence
+    context and must not appear in both splits.
     """
 
     def __init__(
@@ -77,16 +83,31 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         annotations: Path,
         window_size: int = 5000,
         organism: str = "vertebrate",
+        val_chromosomes: list[str] | None = None,
+        split: str = "train",
     ) -> None:
         self.genome = genome
         self.window_size = window_size
-        self.genes = parse_gff3(annotations)
+        self.organism = organism
+        self.val_chromosomes = set(val_chromosomes or [])
+        self.split = split
+        self._fasta = Fasta(str(genome))
+
+        all_genes = parse_gff3(annotations)
+        if self.val_chromosomes:
+            if split == "train":
+                self.genes = [g for g in all_genes if g.seqid not in self.val_chromosomes]
+            else:
+                self.genes = [g for g in all_genes if g.seqid in self.val_chromosomes]
+        else:
+            self.genes = all_genes
+
         self.windows = list(self._build_windows())
 
     def _build_windows(self) -> Iterator[tuple[str, npt.NDArray[np.int8]]]:
         for gene in self.genes:
-            seq = read_sequence(self.genome, gene.seqid, gene.start, gene.end)
-            labels = _make_labels(seq, gene)
+            seq = str(self._fasta[gene.seqid][gene.start:gene.end])
+            labels = _make_labels(gene)
             for i in range(0, len(seq) - self.window_size + 1, self.window_size // 2):
                 yield seq[i:i + self.window_size], labels[i:i + self.window_size]
 
@@ -98,7 +119,7 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         return _one_hot(seq), torch.from_numpy(labels).long()
 
 
-def _make_labels(sequence: str, gene: GFF3Gene) -> npt.NDArray[np.int8]:
+def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
     """Assign per-position class labels from a gene annotation."""
     L = gene.end - gene.start
     labels = np.full(L, N_CLASSES - 1, dtype=np.int8)  # default: intergenic
