@@ -27,6 +27,8 @@ def train_model(
     batch_size: int = 32,
     val_fraction: float = 0.1,
     val_chromosomes: list[str] | None = None,
+    window_size: int = 5000,
+    channels: int = 256,
     device: str = "cpu",
 ) -> SignalModel:
     """
@@ -43,11 +45,11 @@ def train_model(
 
     if val_chromosomes:
         train_ds = SignalDataset(
-            genome, annotations, organism=organism,
+            genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="train",
         )
         val_ds = SignalDataset(
-            genome, annotations, organism=organism,
+            genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="val",
         )
         print(f"Val chromosomes: {val_chromosomes}", flush=True)
@@ -55,7 +57,7 @@ def train_model(
     else:
         # Fallback: random window split (leaky but acceptable for fungi)
         from torch.utils.data import random_split
-        dataset = SignalDataset(genome, annotations, organism=organism)
+        dataset = SignalDataset(genome, annotations, window_size=window_size, organism=organism)
         n_val = max(1, int(len(dataset) * val_fraction))
         train_ds, val_ds = random_split(dataset, [len(dataset) - n_val, n_val])
         print(f"Random split -- Train: {len(train_ds):,}  Val: {len(val_ds):,}", flush=True)
@@ -69,7 +71,7 @@ def train_model(
         num_workers=4, pin_memory=(device != "cpu"),
     )
 
-    model = SignalModel().to(device)
+    model = SignalModel(channels=channels).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     loss_fn = nn.CrossEntropyLoss()

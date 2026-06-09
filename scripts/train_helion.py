@@ -83,6 +83,8 @@ def main() -> None:
         lr=args.lr,
         batch_size=args.batch_size,
         val_fraction=args.val_fraction,
+        window_size=args.window_size,
+        channels=args.channels,
         device=device,
     )
 
