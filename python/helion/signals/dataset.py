@@ -116,7 +116,7 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         seq, labels = self.windows[idx]
-        return _one_hot(seq), torch.from_numpy(labels).long()
+        return _one_hot(seq), torch.tensor(labels, dtype=torch.long)
 
 
 def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
