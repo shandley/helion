@@ -43,7 +43,7 @@ if [ ! -f "${GFF}" ]; then
     echo "Filtering to nuclear chromosomes and renaming..."
     zcat "${DATA_DIR}/raw.gff.gz" \
         | awk '$1 ~ /^#/ || $1=="NC_003070.9" || $1=="NC_003071.7" || $1=="NC_003074.8" || $1=="NC_003075.7" || $1=="NC_003076.8"' \
-        | sed "${RENAME_GFF}" \
+        | sed 's/^NC_003070\.[0-9]*/1/; s/^NC_003071\.[0-9]*/2/; s/^NC_003074\.[0-9]*/3/; s/^NC_003075\.[0-9]*/4/; s/^NC_003076\.[0-9]*/5/' \
         > "${GFF}"
     rm "${DATA_DIR}/raw.gff.gz"
     echo "  done: $(wc -l < ${GFF}) lines"
