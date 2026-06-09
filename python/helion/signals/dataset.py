@@ -41,11 +41,13 @@ def parse_gff3(path: Path) -> list[GFF3Gene]:
             seqid, _, _, start, end, _, strand, _, attrs = parts
             s, e = int(start) - 1, int(end)
 
-            gene_id = _extract_attr(attrs, "Parent") or _extract_attr(attrs, "ID") or ""
-
             if feature == "mRNA":
+                # Key by the transcript's own ID so CDS children (keyed by Parent) match
+                gene_id = _extract_attr(attrs, "ID") or ""
                 genes[gene_id] = GFF3Gene(seqid=seqid, start=s, end=e, strand=strand, exons=[])
             elif feature == "CDS":
+                # Parent points to the transcript ID
+                gene_id = _extract_attr(attrs, "Parent") or ""
                 exons.setdefault(gene_id, []).append((s, e))
 
     for gid, gene in genes.items():
