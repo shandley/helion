@@ -96,8 +96,8 @@ class SignalModel(nn.Module):
     @classmethod
     def load(cls, path: Path, organism: str = "vertebrate", device: str = "cpu") -> SignalModel:
         model = cls()
-        weights_path = path / f"{organism}.pt"
-        state = torch.load(weights_path, map_location=device)
+        weights_path = path / "weights.pt"
+        state = torch.load(weights_path, map_location=device, weights_only=True)
         model.load_state_dict(state)
         model.eval()
         return model.to(device)
