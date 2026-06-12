@@ -174,19 +174,21 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
 
     exons = sorted(gene.exons)
 
-    for exon_start, exon_end in exons:
+    for i, (exon_start, exon_end) in enumerate(exons):
         rel_s = exon_start - gene.start
         rel_e = exon_end - gene.start
         for pos in range(rel_s, min(rel_e, L)):
             frame = (pos - rel_s) % 3
             labels[pos] = 4 + frame  # coding_f0/f1/f2
 
-        # splice donor (GT): first intronic position after exon end
+        # Donor: first intronic position after this exon end (skip last exon).
         if rel_e < L:
             labels[rel_e] = 0
-        # splice acceptor (AG): 2 nt before exon start (the AG dinucleotide)
-        if rel_s - 2 >= 0:
-            labels[rel_s - 2] = 1
+        # Acceptor: first position of this exon, i.e. where the exon starts.
+        # Placed at rel_s (not rel_s-2) so the DAG produces correct start coordinates.
+        # Skipped for the first exon which has no upstream intron.
+        if i > 0:
+            labels[rel_s] = 1
 
     # Start codon: first 3 nt of first exon in transcript order.
     # Stop codon: last 3 nt of last exon in transcript order.

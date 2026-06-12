@@ -19,6 +19,7 @@ from helion.signals.model import SignalModel  # noqa: E402
 MODELS = [
     ("drosophila", H / "models/drosophila", H / "results/drosophila_chr2L.fa"),
     ("plant_w2000", H / "models/plant_w2000", H / "results/plant_chr1.fa"),
+    ("vertebrate", H / "models/vertebrate", H / "results/vertebrate_chr22.fa"),
 ]
 
 CHANNELS = ["donor", "acceptor", "start", "stop", "coding_f0", "coding_f1", "coding_f2", "intergenic"]
