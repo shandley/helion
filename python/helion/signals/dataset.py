@@ -177,9 +177,11 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
     for i, (exon_start, exon_end) in enumerate(exons):
         rel_s = exon_start - gene.start
         rel_e = exon_end - gene.start
-        for pos in range(rel_s, min(rel_e, L)):
-            frame = (pos - rel_s) % 3
-            labels[pos] = 4 + frame  # coding_f0/f1/f2
+        cds_end = min(rel_e, L)
+
+        # Coding frames: vectorized tile of [4, 5, 6, 4, 5, 6, ...]
+        if rel_s < cds_end:
+            labels[rel_s:cds_end] = np.arange(cds_end - rel_s) % 3 + 4
 
         # Donor: first intronic position after this exon end (skip last exon).
         if rel_e < L:
@@ -196,17 +198,13 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
     if gene.strand == "+":
         first_rel = exons[0][0] - gene.start
         last_rel_e = exons[-1][1] - gene.start
-        for p in range(first_rel, min(first_rel + 3, L)):
-            labels[p] = 2  # start
-        for p in range(max(0, last_rel_e - 3), last_rel_e):
-            labels[p] = 3  # stop
+        labels[first_rel:min(first_rel + 3, L)] = 2   # start
+        labels[max(0, last_rel_e - 3):last_rel_e] = 3  # stop
     else:
         # Reverse strand: highest coords = 5' end of transcript
         last_rel_e = exons[-1][1] - gene.start
         first_rel = exons[0][0] - gene.start
-        for p in range(max(0, last_rel_e - 3), last_rel_e):
-            labels[p] = 2  # start
-        for p in range(first_rel, min(first_rel + 3, L)):
-            labels[p] = 3  # stop
+        labels[max(0, last_rel_e - 3):last_rel_e] = 2  # start
+        labels[first_rel:min(first_rel + 3, L)] = 3    # stop
 
     return labels
