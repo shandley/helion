@@ -86,6 +86,7 @@ def main() -> None:
         window_size=args.window_size,
         channels=args.channels,
         device=device,
+        workers=args.workers,
     )
 
     elapsed = time.time() - t0

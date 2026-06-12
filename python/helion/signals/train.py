@@ -30,6 +30,7 @@ def train_model(
     window_size: int = 5000,
     channels: int = 256,
     device: str = "cpu",
+    workers: int = 4,
 ) -> SignalModel:
     """
     Train a Helion signal model.
@@ -47,10 +48,12 @@ def train_model(
         train_ds = SignalDataset(
             genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="train",
+            centered_sampling=True,
         )
         val_ds = SignalDataset(
             genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="val",
+            centered_sampling=False,
         )
         print(f"Val chromosomes: {val_chromosomes}", flush=True)
         print(f"Train windows: {len(train_ds):,}  Val windows: {len(val_ds):,}", flush=True)
@@ -62,19 +65,26 @@ def train_model(
         train_ds, val_ds = random_split(dataset, [len(dataset) - n_val, n_val])
         print(f"Random split -- Train: {len(train_ds):,}  Val: {len(val_ds):,}", flush=True)
 
+    # Class weights from actual training windows (inverse frequency, capped 100x).
+    # Compensates for rare signal classes (donor/acceptor/start/stop) being swamped
+    # by intergenic and coding positions in the gradient.
+    base_ds: SignalDataset = train_ds if isinstance(train_ds, SignalDataset) else train_ds.dataset  # type: ignore[assignment]
+    class_weights = base_ds.compute_class_weights().to(device)
+    print(f"Class weights: {[f'{w:.2f}' for w in class_weights.tolist()]}", flush=True)
+
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=4, pin_memory=(device != "cpu"),
+        num_workers=workers, pin_memory=(device != "cpu"),
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size,
-        num_workers=4, pin_memory=(device != "cpu"),
+        num_workers=workers, pin_memory=(device != "cpu"),
     )
 
     model = SignalModel(channels=channels).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.CrossEntropyLoss(weight=class_weights)
 
     best_val_loss = float("inf")
 

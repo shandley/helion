@@ -70,11 +70,11 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     Each sample is a (one_hot_dna, label_tensor) pair where labels are
     per-position class indices matching the N_CLASSES output channels.
 
-    Val split is chromosome-level to prevent data leakage: if
-    val_chromosomes is given, all transcripts on those chromosomes go to
-    the validation set and are excluded from training. This is the
-    correct approach since windows from the same gene share sequence
-    context and must not appear in both splits.
+    Val split is chromosome-level to prevent data leakage. Training windows
+    use splice-site-centered sampling (one window per signal position) to
+    ensure every window contains at least one rare signal class. Val windows
+    use the original sliding-window approach so val loss is comparable across
+    training runs.
     """
 
     def __init__(
@@ -85,12 +85,14 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         organism: str = "vertebrate",
         val_chromosomes: list[str] | None = None,
         split: str = "train",
+        centered_sampling: bool = False,
     ) -> None:
         self.genome = genome
         self.window_size = window_size
         self.organism = organism
         self.val_chromosomes = set(val_chromosomes or [])
         self.split = split
+        self.centered_sampling = centered_sampling
         self._fasta = Fasta(str(genome))
 
         all_genes = parse_gff3(annotations)
@@ -105,11 +107,57 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         self.windows = list(self._build_windows())
 
     def _build_windows(self) -> Iterator[tuple[str, npt.NDArray[np.int8]]]:
+        half = self.window_size // 2
         for gene in self.genes:
+            L = gene.end - gene.start
             seq = str(self._fasta[gene.seqid][gene.start:gene.end])
             labels = _make_labels(gene)
-            for i in range(0, len(seq) - self.window_size + 1, self.window_size // 2):
-                yield seq[i:i + self.window_size], labels[i:i + self.window_size]
+
+            if self.centered_sampling:
+                # One window per signal position (donor, acceptor, start, stop = classes 0-3).
+                # Guarantees every training window contains at least one rare signal label.
+                anchor_positions = sorted(set(int(i) for i in np.where(labels < 4)[0]))
+
+                # Single-exon genes have no splice sites; fall back to gene midpoint so
+                # the coding signal from these genes still contributes to training.
+                if not anchor_positions:
+                    anchor_positions = [L // 2]
+
+                seen_starts: set[int] = set()
+                for pos in anchor_positions:
+                    win_start = max(0, pos - half)
+                    win_end = win_start + self.window_size
+                    if win_end > L:
+                        win_end = L
+                        win_start = max(0, win_end - self.window_size)
+                    if win_end - win_start < self.window_size:
+                        continue  # gene shorter than one window
+                    if win_start in seen_starts:
+                        continue
+                    seen_starts.add(win_start)
+                    yield seq[win_start:win_end], labels[win_start:win_end]
+            else:
+                # Sliding window (used for val and fungus random-split fallback).
+                for i in range(0, L - self.window_size + 1, self.window_size // 2):
+                    yield seq[i:i + self.window_size], labels[i:i + self.window_size]
+
+    def compute_class_weights(self) -> torch.Tensor:
+        """Class weights for weighted cross-entropy.
+
+        Each class gets equal total contribution to the loss:
+          weight[c] = total_positions / (N_CLASSES * count[c])
+        This up-weights rare signal classes (donor/acceptor/start/stop) while
+        leaving common classes (coding, intergenic) near their natural scale.
+        Capped at 100x to prevent extreme gradients.
+        """
+        counts = np.zeros(N_CLASSES, dtype=np.int64)
+        for _, labels in self.windows:
+            counts += np.bincount(labels.astype(np.intp), minlength=N_CLASSES)
+        counts = np.maximum(counts, 1)
+        total = float(counts.sum())
+        weights = total / (N_CLASSES * counts.astype(np.float64))
+        weights = np.minimum(weights, 100.0)
+        return torch.tensor(weights, dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -124,18 +172,39 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
     L = gene.end - gene.start
     labels = np.full(L, N_CLASSES - 1, dtype=np.int8)  # default: intergenic
 
-    for exon_start, exon_end in gene.exons:
+    exons = sorted(gene.exons)
+
+    for exon_start, exon_end in exons:
         rel_s = exon_start - gene.start
         rel_e = exon_end - gene.start
         for pos in range(rel_s, min(rel_e, L)):
             frame = (pos - rel_s) % 3
             labels[pos] = 4 + frame  # coding_f0/f1/f2
 
-        # splice donor (GT): 2 nt at exon end
-        if rel_e + 2 <= L:
+        # splice donor (GT): first intronic position after exon end
+        if rel_e < L:
             labels[rel_e] = 0
-        # splice acceptor (AG): 2 nt before exon start
+        # splice acceptor (AG): 2 nt before exon start (the AG dinucleotide)
         if rel_s - 2 >= 0:
             labels[rel_s - 2] = 1
+
+    # Start codon: first 3 nt of first exon in transcript order.
+    # Stop codon: last 3 nt of last exon in transcript order.
+    # Applied after coding frames so they overwrite the first/last CDS positions.
+    if gene.strand == "+":
+        first_rel = exons[0][0] - gene.start
+        last_rel_e = exons[-1][1] - gene.start
+        for p in range(first_rel, min(first_rel + 3, L)):
+            labels[p] = 2  # start
+        for p in range(max(0, last_rel_e - 3), last_rel_e):
+            labels[p] = 3  # stop
+    else:
+        # Reverse strand: highest coords = 5' end of transcript
+        last_rel_e = exons[-1][1] - gene.start
+        first_rel = exons[0][0] - gene.start
+        for p in range(max(0, last_rel_e - 3), last_rel_e):
+            labels[p] = 2  # start
+        for p in range(first_rel, min(first_rel + 3, L)):
+            labels[p] = 3  # stop
 
     return labels
