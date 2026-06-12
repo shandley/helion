@@ -39,6 +39,11 @@ def main() -> None:
     ev.add_argument("reference", type=Path, help="Reference annotation GFF3")
     ev.add_argument("predictions", type=Path, help="Helion prediction GFF3")
     ev.add_argument("genome", type=Path, help="Genome FASTA (must have .fai index)")
+    ev.add_argument("--tolerance", type=int, default=0,
+                    help="Allow exon boundary offsets up to this many nt (default: 0 = exact)")
+    ev.add_argument("--overlap-stats", action="store_true",
+                    help="Report overlap/offset statistics for predicted exons")
+    ev.add_argument("--label", default="", help="Label for the report header")
 
     args = parser.parse_args()
 
@@ -70,8 +75,10 @@ def main() -> None:
             ref_gff3=args.reference,
             pred_gff3=args.predictions,
             genome=args.genome,
+            tolerance=args.tolerance,
+            compute_overlap=args.overlap_stats,
         )
-        print(format_report(result))
+        print(format_report(result, label=args.label))
     else:
         parser.print_help()
         sys.exit(1)
