@@ -43,8 +43,9 @@ fn build_dag(
 }
 
 #[pyfunction]
-fn viterbi_decode(dag: &graph::PyDag) -> PyResult<Vec<viterbi::PyGeneModel>> {
-    let models = viterbi::decode(&dag.0);
+#[pyo3(signature = (dag, strand = "+"))]
+fn viterbi_decode(dag: &graph::PyDag, strand: &str) -> PyResult<Vec<viterbi::PyGeneModel>> {
+    let models = viterbi::decode(&dag.0, strand);
     Ok(models.into_iter().map(viterbi::PyGeneModel).collect())
 }
 

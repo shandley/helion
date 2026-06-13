@@ -67,6 +67,25 @@ impl PyGeneModel {
         m.seqid = seqid;
         PyGeneModel(m)
     }
+
+    /// Flip coordinates from RC-window space back to genomic sense-strand space.
+    ///
+    /// RC exon [s, e) maps to genomic [window_len - e, window_len - s).
+    /// Exon order is reversed so exons remain sorted by genomic start.
+    fn with_rc_flip(&self, window_len: usize) -> Self {
+        let mut m = self.0.clone();
+        m.start = window_len - self.0.end;
+        m.end = window_len - self.0.start;
+        let n = m.exons.len();
+        for i in 0..n {
+            let old_start = self.0.exons[i].start;
+            let old_end = self.0.exons[i].end;
+            m.exons[i].start = window_len - old_end;
+            m.exons[i].end = window_len - old_start;
+        }
+        m.exons.reverse();
+        PyGeneModel(m)
+    }
 }
 
 #[derive(Clone)]
@@ -140,7 +159,7 @@ fn best_path(
 /// excludes all nodes that overlap the called gene's genomic span before
 /// searching for the next model. Stops when no remaining path scores above 0
 /// or when the model cap is reached.
-pub fn decode(dag: &Dag) -> Vec<GeneModel> {
+pub fn decode(dag: &Dag, strand: &str) -> Vec<GeneModel> {
     let n = dag.nodes.len();
     if n == 0 {
         return vec![];
@@ -166,7 +185,7 @@ pub fn decode(dag: &Dag) -> Vec<GeneModel> {
             seqid: String::new(), // set by Python via with_seqid()
             start: model_start,
             end: model_end,
-            strand: "+".to_string(),
+            strand: strand.to_string(),
             score,
             exons,
         });
