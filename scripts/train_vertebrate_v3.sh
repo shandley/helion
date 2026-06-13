@@ -11,8 +11,13 @@
 #SBATCH --output=/storage3/fs1/shandley/Active/helion/logs/%j_train_vert_v3.out
 #SBATCH --error=/storage3/fs1/shandley/Active/helion/logs/%j_train_vert_v3.err
 
-# v3 change: dataset normalizes all training examples to sense orientation
-# (RC sequence + RC-mapped labels for minus-strand genes).
+# v3 changes:
+# 1. Dataset normalizes all training examples to sense orientation
+#    (RC sequence + RC-mapped labels for minus-strand genes).
+# 2. Window size 5kb (up from 2kb): 37% of vertebrate introns exceed 2kb,
+#    so 2kb windows contain pure intronic sequence with no anchor signal
+#    during inference. 5kb covers the p75 intron (3.4kb) and gives the
+#    model cleaner exon/intron boundary context.
 
 set -euo pipefail
 
@@ -43,9 +48,9 @@ python "${HELION_ROOT}/scripts/train_helion.py" \
     --output      "${MODEL_OUT}" \
     --organism    vertebrate \
     --epochs      50 \
-    --batch-size  128 \
+    --batch-size  64 \
     --lr          1e-4 \
-    --window-size 2000 \
+    --window-size 5000 \
     --channels    256 \
     --workers     8 \
     --device      cuda
