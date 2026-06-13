@@ -202,14 +202,21 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
 
     exons = sorted(gene.exons)
 
+    frame_offset = 0  # reading frame carried across exons
     for i, (exon_start, exon_end) in enumerate(exons):
         rel_s = exon_start - gene.start
         rel_e = exon_end - gene.start
         cds_end = min(rel_e, L)
 
-        # Coding frames: vectorized tile of [4, 5, 6, 4, 5, 6, ...]
+        # Coding phase: all positions in this exon get the same label (the
+        # exon's phase). The DAG scores each candidate exon by averaging one
+        # coding channel across all positions; uniform phase labeling ensures
+        # the correct-phase DAG node scores higher than the other two.
+        # Cycling labels (f0,f1,f2,...) would average to 1/3 for every phase
+        # and give the DAG no discriminating signal.
         if rel_s < cds_end:
-            labels[rel_s:cds_end] = np.arange(cds_end - rel_s) % 3 + 4
+            labels[rel_s:cds_end] = frame_offset + 4
+        frame_offset = (frame_offset + (rel_e - rel_s)) % 3
 
         # Donor: first intronic position after this exon end (skip last exon).
         # Use index rather than position: rel_e < L fails when 3' UTR separates
