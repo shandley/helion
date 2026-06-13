@@ -12,6 +12,8 @@ from torch.utils.data import Dataset
 
 from helion.signals.model import N_CLASSES, _one_hot
 
+_RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+
 
 @dataclass
 class GFF3Gene:
@@ -61,6 +63,24 @@ def _extract_attr(attrs: str, key: str) -> str | None:
         if part.startswith(f"{key}="):
             return part[len(key) + 1:]
     return None
+
+
+def _reverse_complement(seq: str) -> str:
+    return seq.translate(_RC_TABLE)[::-1]
+
+
+def _rc_gene(gene: GFF3Gene) -> GFF3Gene:
+    """Return a virtual + strand gene with exons mapped to RC coordinates.
+
+    Used so _make_labels() always receives a sense-orientation gene,
+    avoiding the mixed + /- training signal that caused class confusion.
+    """
+    L = gene.end - gene.start
+    rc_exons: list[tuple[int, int]] = sorted(
+        (gene.start + L - (e - gene.start), gene.start + L - (s - gene.start))
+        for s, e in gene.exons
+    )
+    return GFF3Gene(seqid=gene.seqid, start=gene.start, end=gene.end, strand="+", exons=rc_exons)
 
 
 class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
@@ -113,7 +133,13 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         for gene in self.genes:
             L = gene.end - gene.start
             seq = str(self._fasta[gene.seqid][gene.start:gene.end])
-            labels = _make_labels(gene)
+            # Normalize to sense orientation: RC both sequence and label array for
+            # minus-strand genes so the model always sees donor=GT, acceptor=AG.
+            if gene.strand == "-":
+                seq = _reverse_complement(seq)
+                labels = _make_labels(_rc_gene(gene))
+            else:
+                labels = _make_labels(gene)
 
             if self.centered_sampling:
                 # One window per signal position (donor, acceptor, start, stop = classes 0-3).
@@ -186,7 +212,9 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
             labels[rel_s:cds_end] = np.arange(cds_end - rel_s) % 3 + 4
 
         # Donor: first intronic position after this exon end (skip last exon).
-        if rel_e < L:
+        # Use index rather than position: rel_e < L fails when 3' UTR separates
+        # the last CDS exon from the mRNA boundary.
+        if i < len(exons) - 1:
             labels[rel_e] = 0
         # Acceptor: first position of this exon, i.e. where the exon starts.
         # Placed at rel_s (not rel_s-2) so the DAG produces correct start coordinates.
@@ -194,19 +222,12 @@ def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:
         if i > 0:
             labels[rel_s] = 1
 
-    # Start codon: first 3 nt of first exon in transcript order.
-    # Stop codon: last 3 nt of last exon in transcript order.
-    # Applied after coding frames so they overwrite the first/last CDS positions.
-    if gene.strand == "+":
-        first_rel = exons[0][0] - gene.start
-        last_rel_e = exons[-1][1] - gene.start
-        labels[first_rel:min(first_rel + 3, L)] = 2   # start
-        labels[max(0, last_rel_e - 3):last_rel_e] = 3  # stop
-    else:
-        # Reverse strand: highest coords = 5' end of transcript
-        last_rel_e = exons[-1][1] - gene.start
-        first_rel = exons[0][0] - gene.start
-        labels[max(0, last_rel_e - 3):last_rel_e] = 2  # start
-        labels[first_rel:min(first_rel + 3, L)] = 3    # stop
+    # Start codon: first 3 nt of first exon. Stop codon: last 3 nt of last exon.
+    # Minus-strand genes are RC-mapped via _rc_gene() before calling this function,
+    # so gene.strand is always "+" here.
+    first_rel = exons[0][0] - gene.start
+    last_rel_e = exons[-1][1] - gene.start
+    labels[first_rel:min(first_rel + 3, L)] = 2   # start
+    labels[max(0, last_rel_e - 3):last_rel_e] = 3  # stop
 
     return labels

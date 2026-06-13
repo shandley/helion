@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 
-# Per-position output channels (both strands implied by symmetry -- handled in scoring)
+# Per-position output channels (sense-strand only; RC inference handles minus strand)
 # Order: donor, acceptor, start, stop, coding_f0, coding_f1, coding_f2, intergenic
 N_CLASSES = 8
 CODING_CHANNELS = slice(4, 7)  # coding_f0, f1, f2
