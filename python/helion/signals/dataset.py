@@ -105,6 +105,8 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
             self.genes = all_genes
 
         self.windows = list(self._build_windows())
+        self._fasta.close()
+        del self._fasta
 
     def _build_windows(self) -> Iterator[tuple[str, npt.NDArray[np.int8]]]:
         half = self.window_size // 2
