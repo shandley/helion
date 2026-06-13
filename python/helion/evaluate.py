@@ -6,9 +6,10 @@ Compares a predicted GFF3 against a reference GFF3 at two levels:
   Nucleotide: Sn, Sp, CC (Matthews correlation coefficient)
   Exon:       exact boundary match -- Sn, Sp, F1
 
-Strand is ignored throughout: a coding position or exon matches
-regardless of which strand it is annotated on. This is appropriate
-until Helion's Viterbi emits strand-aware predictions.
+By default strand is ignored so that forward-only models (which label all
+predictions "+") can still be evaluated against a strand-annotated reference.
+Pass strand_aware=True to evaluate() to enforce strand matching -- this is
+the correct mode once Helion emits both + and - strand predictions.
 
 Usage:
     from helion.evaluate import evaluate, format_report
@@ -124,7 +125,8 @@ class EvaluationResult:
 # GFF3 parsing
 # ---------------------------------------------------------------------------
 
-CdsMap = dict[str, list[tuple[int, int]]]
+# CDS intervals: seqid -> [(start, end, strand)]
+CdsMap = dict[str, list[tuple[int, int, str]]]
 
 
 def load_cds_intervals(gff3_path: Path) -> CdsMap:
@@ -132,7 +134,8 @@ def load_cds_intervals(gff3_path: Path) -> CdsMap:
     Extract all CDS intervals from a GFF3 file.
 
     Converts from GFF3's 1-based inclusive coordinates to 0-based
-    half-open [start, end) intervals.
+    half-open [start, end) intervals. Strand is preserved for use in
+    strand_aware evaluation mode.
     """
     intervals: CdsMap = {}
     with gff3_path.open() as f:
@@ -147,7 +150,8 @@ def load_cds_intervals(gff3_path: Path) -> CdsMap:
             seqid = parts[0]
             start = int(parts[3]) - 1
             end = int(parts[4])
-            intervals.setdefault(seqid, []).append((start, end))
+            strand = parts[6] if parts[6] in ("+", "-") else "."
+            intervals.setdefault(seqid, []).append((start, end, strand))
     return intervals
 
 
@@ -180,27 +184,38 @@ def _nucleotide_metrics(
     ref: CdsMap,
     pred: CdsMap,
     chrom_lengths: dict[str, int],
+    strand_aware: bool = False,
 ) -> NucleotideMetrics:
     tp = fp = tn = fn = 0
 
+    strands = ["+", "-"] if strand_aware else [None]
+
     for seqid, length in chrom_lengths.items():
-        ref_mask = np.zeros(length, dtype=bool)
-        for s, e in ref.get(seqid, []):
-            ref_mask[s:e] = True
+        for strand in strands:
+            ref_mask = np.zeros(length, dtype=bool)
+            for s, e, st in ref.get(seqid, []):
+                if strand is None or st == strand:
+                    ref_mask[s:e] = True
 
-        pred_mask = np.zeros(length, dtype=bool)
-        for s, e in pred.get(seqid, []):
-            pred_mask[s:e] = True
+            pred_mask = np.zeros(length, dtype=bool)
+            for s, e, st in pred.get(seqid, []):
+                if strand is None or st == strand:
+                    pred_mask[s:e] = True
 
-        tp += int(np.count_nonzero(ref_mask & pred_mask))
-        fp += int(np.count_nonzero(~ref_mask & pred_mask))
-        tn += int(np.count_nonzero(~ref_mask & ~pred_mask))
-        fn += int(np.count_nonzero(ref_mask & ~pred_mask))
+            tp += int(np.count_nonzero(ref_mask & pred_mask))
+            fp += int(np.count_nonzero(~ref_mask & pred_mask))
+            tn += int(np.count_nonzero(~ref_mask & ~pred_mask))
+            fn += int(np.count_nonzero(ref_mask & ~pred_mask))
 
     return NucleotideMetrics(tp=tp, fp=fp, tn=tn, fn=fn)
 
 
-def _exon_metrics(ref: CdsMap, pred: CdsMap, tolerance: int = 0) -> ExonMetrics:
+def _exon_metrics(
+    ref: CdsMap,
+    pred: CdsMap,
+    tolerance: int = 0,
+    strand_aware: bool = False,
+) -> ExonMetrics:
     """
     Compute exon-level metrics.
 
@@ -208,18 +223,31 @@ def _exon_metrics(ref: CdsMap, pred: CdsMap, tolerance: int = 0) -> ExonMetrics:
     With tolerance>0: both boundaries must be within tolerance nt of
     a reference exon's boundaries. Each reference exon can be matched
     at most once; each predicted exon counts at most once.
+    With strand_aware=True: predicted and reference exons must share strand.
     """
     if tolerance == 0:
-        ref_set: set[tuple[str, int, int]] = {
-            (seqid, s, e)
-            for seqid, ivs in ref.items()
-            for s, e in ivs
-        }
-        pred_set: set[tuple[str, int, int]] = {
-            (seqid, s, e)
-            for seqid, ivs in pred.items()
-            for s, e in ivs
-        }
+        if strand_aware:
+            ref_set: set[tuple[str, int, int, str]] = {
+                (seqid, s, e, st)
+                for seqid, ivs in ref.items()
+                for s, e, st in ivs
+            }
+            pred_set: set[tuple[str, int, int, str]] = {
+                (seqid, s, e, st)
+                for seqid, ivs in pred.items()
+                for s, e, st in ivs
+            }
+        else:
+            ref_set = {  # type: ignore[assignment]
+                (seqid, s, e, ".")
+                for seqid, ivs in ref.items()
+                for s, e, _st in ivs
+            }
+            pred_set = {  # type: ignore[assignment]
+                (seqid, s, e, ".")
+                for seqid, ivs in pred.items()
+                for s, e, _st in ivs
+            }
         tp = len(ref_set & pred_set)
         fn = len(ref_set - pred_set)
         fp = len(pred_set - ref_set)
@@ -228,25 +256,26 @@ def _exon_metrics(ref: CdsMap, pred: CdsMap, tolerance: int = 0) -> ExonMetrics:
     # Tolerance > 0: build sorted ref arrays per seqid for fast lookup
     import bisect
 
-    ref_by_seqid: dict[str, list[tuple[int, int]]] = {
+    ref_by_seqid: dict[str, list[tuple[int, int, str]]] = {
         seqid: sorted(ivs) for seqid, ivs in ref.items()
     }
 
-    matched_refs: set[tuple[str, int, int]] = set()
+    matched_refs: set[tuple[str, int, int, str]] = set()
     fp = 0
 
     for seqid, pred_ivs in pred.items():
         ref_ivs = ref_by_seqid.get(seqid, [])
-        ref_starts = [s for s, e in ref_ivs]
+        ref_starts = [s for s, e, _st in ref_ivs]
 
-        for ps, pe in pred_ivs:
-            # Binary search for reference exons whose start is near ps
+        for ps, pe, pst in pred_ivs:
             lo = bisect.bisect_left(ref_starts, ps - tolerance)
             hi = bisect.bisect_right(ref_starts, ps + tolerance)
             found = False
             for i in range(lo, hi):
-                rs, re = ref_ivs[i]
-                key = (seqid, rs, re)
+                rs, re, rst = ref_ivs[i]
+                if strand_aware and pst != rst:
+                    continue
+                key = (seqid, rs, re, rst)
                 if abs(ps - rs) <= tolerance and abs(pe - re) <= tolerance:
                     if key not in matched_refs:
                         matched_refs.add(key)
@@ -271,7 +300,7 @@ def _overlap_stats(ref: CdsMap, pred: CdsMap) -> OverlapStats:
     """
     import bisect
 
-    ref_by_seqid: dict[str, list[tuple[int, int]]] = {
+    ref_by_seqid: dict[str, list[tuple[int, int, str]]] = {
         seqid: sorted(ivs) for seqid, ivs in ref.items()
     }
 
@@ -283,10 +312,9 @@ def _overlap_stats(ref: CdsMap, pred: CdsMap) -> OverlapStats:
         ref_ivs = ref_by_seqid.get(seqid, [])
         if not ref_ivs:
             continue
-        ref_starts = [s for s, e in ref_ivs]
-        ref_ends = [e for s, e in ref_ivs]
+        ref_starts = [s for s, _e, _st in ref_ivs]
 
-        for ps, pe in pred_ivs:
+        for ps, pe, _pst in pred_ivs:
             # Find reference exons that overlap [ps, pe]
             # An exon [rs, re] overlaps [ps, pe] if rs < pe and re > ps
             lo = bisect.bisect_left(ref_starts, pe) - 1
@@ -295,7 +323,7 @@ def _overlap_stats(ref: CdsMap, pred: CdsMap) -> OverlapStats:
             best_end_off: Optional[int] = None
 
             for i in range(max(0, lo - 5), min(len(ref_ivs), lo + 10)):
-                rs, re = ref_ivs[i]
+                rs, re, _rst = ref_ivs[i]
                 if rs >= pe:
                     break
                 if re <= ps:
@@ -345,6 +373,7 @@ def evaluate(
     genome: Path,
     tolerance: int = 0,
     compute_overlap: bool = False,
+    strand_aware: bool = False,
 ) -> EvaluationResult:
     """
     Evaluate a Helion prediction GFF3 against a reference annotation.
@@ -355,6 +384,8 @@ def evaluate(
         genome:          Genome FASTA (must have a .fai index alongside it)
         tolerance:       Allow boundary offsets up to this many nt (0 = exact match)
         compute_overlap: If True, also compute overlap/offset statistics
+        strand_aware:    If True, predicted and reference features must share strand.
+                         Use this mode when Helion emits both + and - predictions.
 
     Returns:
         EvaluationResult with nucleotide, exon, and optional overlap metrics.
@@ -366,8 +397,8 @@ def evaluate(
     overlap = _overlap_stats(ref, pred) if compute_overlap else None
 
     return EvaluationResult(
-        nucleotide=_nucleotide_metrics(ref, pred, chrom_lengths),
-        exon=_exon_metrics(ref, pred, tolerance=tolerance),
+        nucleotide=_nucleotide_metrics(ref, pred, chrom_lengths, strand_aware=strand_aware),
+        exon=_exon_metrics(ref, pred, tolerance=tolerance, strand_aware=strand_aware),
         overlap=overlap,
     )
 
@@ -418,5 +449,5 @@ def format_report(result: EvaluationResult, label: str = "") -> str:
             f"  90th pct end   offset:    {ov.p90_end_offset:.0f} nt",
         ]
 
-    lines += ["", "Note: strand-agnostic (Helion currently predicts + strand only)"]
+    lines += ["", "Note: strand-agnostic matching (use --strand-aware for RC inference results)"]
     return "\n".join(lines)

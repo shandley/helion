@@ -43,6 +43,8 @@ def main() -> None:
                     help="Allow exon boundary offsets up to this many nt (default: 0 = exact)")
     ev.add_argument("--overlap-stats", action="store_true",
                     help="Report overlap/offset statistics for predicted exons")
+    ev.add_argument("--strand-aware", action="store_true",
+                    help="Enforce strand matching (use when predictions include both strands)")
     ev.add_argument("--label", default="", help="Label for the report header")
 
     args = parser.parse_args()
@@ -77,6 +79,7 @@ def main() -> None:
             genome=args.genome,
             tolerance=args.tolerance,
             compute_overlap=args.overlap_stats,
+            strand_aware=args.strand_aware,
         )
         print(format_report(result, label=args.label))
     else:
