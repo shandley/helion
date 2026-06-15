@@ -27,7 +27,7 @@ export PYTHONPATH="${H}/python"
 source "$HOME/.cargo/env"
 cd "${H}"
 git fetch -q origin && git reset -q --hard origin/main
-maturin develop -q 2>&1 | tail -2
+flock -x -w 120 "${H}/.maturin_build.lock" maturin develop 2>&1
 
 mkdir -p "${H}/results"
 
