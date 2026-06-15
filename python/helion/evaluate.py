@@ -403,7 +403,7 @@ def evaluate(
     )
 
 
-def format_report(result: EvaluationResult, label: str = "") -> str:
+def format_report(result: EvaluationResult, label: str = "", strand_aware: bool = False) -> str:
     """Return a plain-text evaluation report."""
     nt = result.nucleotide
     ex = result.exon
@@ -449,5 +449,8 @@ def format_report(result: EvaluationResult, label: str = "") -> str:
             f"  90th pct end   offset:    {ov.p90_end_offset:.0f} nt",
         ]
 
-    lines += ["", "Note: strand-agnostic matching (use --strand-aware for RC inference results)"]
+    if strand_aware:
+        lines += ["", "Note: strand-aware matching (predictions and reference must share strand)"]
+    else:
+        lines += ["", "Note: strand-agnostic matching (use --strand-aware for RC inference results)"]
     return "\n".join(lines)

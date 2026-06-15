@@ -81,7 +81,7 @@ def main() -> None:
             compute_overlap=args.overlap_stats,
             strand_aware=args.strand_aware,
         )
-        print(format_report(result, label=args.label))
+        print(format_report(result, label=args.label, strand_aware=args.strand_aware))
     else:
         parser.print_help()
         sys.exit(1)
