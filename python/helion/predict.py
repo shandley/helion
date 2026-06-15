@@ -19,6 +19,17 @@ def _reverse_complement(seq: str) -> str:
     return seq.translate(_RC_TABLE)[::-1]
 
 
+def _mean_exon_score(model: PyGeneModel) -> float:
+    """Mean per-exon score for gene-level quality filtering.
+
+    Each exon is scored as donor + acceptor + mean_coding (all softmax probs in
+    [0, 1]), so the mean ranges from ~0.2 (noise) to ~1.8 (strong signal).
+    Filtering on this rather than raw model.score avoids bias toward longer genes.
+    """
+    exons = model.exons
+    return model.score / len(exons) if exons else 0.0
+
+
 def predict(
     genome: Path,
     output: Path,
@@ -28,6 +39,7 @@ def predict(
     device: str = "cpu",
     batch_size: int = 4,
     threshold: float = 0.1,
+    min_gene_score: float = 0.0,
 ) -> list[PyGeneModel]:
     from helion._core import PyGeneModel as _PyGeneModel
     from helion._core import build_dag, viterbi_decode
@@ -70,6 +82,9 @@ def predict(
             all_models.extend(
                 m.with_seqid(window.seqid).with_offset(window.offset) for m in models
             )
+
+    if min_gene_score > 0.0:
+        all_models = [m for m in all_models if _mean_exon_score(m) >= min_gene_score]
 
     write_gff3(all_models, output)
     return all_models

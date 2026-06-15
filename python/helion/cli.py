@@ -25,6 +25,12 @@ def main() -> None:
     pred.add_argument("--device", default="cpu", help="Torch device (cpu, cuda, mps)")
     pred.add_argument("--batch-size", type=int, default=4)
     pred.add_argument("--threshold", type=float, default=0.1)
+    pred.add_argument(
+        "--min-gene-score",
+        type=float,
+        default=0.0,
+        help="Filter assembled gene models below this mean per-exon score (0 = no filter)",
+    )
 
     train = subparsers.add_parser("train", help="Train a signal model")
     train.add_argument("annotations", type=Path, help="GFF3 annotation file")
@@ -59,6 +65,7 @@ def main() -> None:
             device=args.device,
             batch_size=args.batch_size,
             threshold=args.threshold,
+            min_gene_score=args.min_gene_score,
         )
     elif args.command == "train":
         from helion.signals.train import train_model
