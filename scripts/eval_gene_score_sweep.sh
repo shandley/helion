@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=2:00:00
+#SBATCH --time=6:00:00
 #SBATCH --output=/storage3/fs1/shandley/Active/helion/logs/%j_gene_score_sweep.out
 #SBATCH --error=/storage3/fs1/shandley/Active/helion/logs/%j_gene_score_sweep.err
 
@@ -24,7 +24,7 @@ ORGANISM="${ORGANISM:-insect}"
 MODEL="${MODEL:-drosophila_v3}"
 CHROM="${CHROM:-4}"
 
-SCORES="${SCORES:-0.0 0.2 0.3 0.4 0.5 0.6 0.7 0.8}"
+SCORES="${SCORES:-0.0 0.4 0.6 0.8 0.9 1.0 1.1 1.2 1.4}"
 
 echo "Job ID:    ${SLURM_JOB_ID}"
 echo "Node:      ${SLURMD_NODENAME}"
