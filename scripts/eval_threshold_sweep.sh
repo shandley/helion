@@ -36,7 +36,7 @@ export PYTHONPATH="${H}/python"
 source "$HOME/.cargo/env"
 cd "${H}"
 git fetch -q origin && git reset -q --hard origin/main
-maturin develop -q 2>&1 | tail -2
+maturin develop 2>&1
 
 FA="${H}/results/${MODEL%_v*}_chr${CHROM}.fa"
 REF="${H}/results/ref_${MODEL%_v*}_chr${CHROM}.gff3"
