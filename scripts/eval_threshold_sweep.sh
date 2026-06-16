@@ -35,8 +35,11 @@ export PYTHONPATH="${H}/python"
 
 source "$HOME/.cargo/env"
 cd "${H}"
-git fetch -q origin && git reset -q --hard origin/main
-flock -x -w 120 "${H}/.maturin_build.lock" maturin develop 2>&1
+# Serialize git reset + maturin install across concurrent jobs on shared conda env.
+flock -x -w 180 "${H}/.build.lock" bash -c '
+    git fetch -q origin && git reset -q --hard origin/main
+    maturin develop 2>&1
+' 
 
 FA="${H}/results/${MODEL%_v*}_chr${CHROM}.fa"
 REF="${H}/results/ref_${MODEL%_v*}_chr${CHROM}.gff3"
