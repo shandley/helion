@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=2:00:00
+#SBATCH --time=4:00:00
 #SBATCH --output=/storage3/fs1/shandley/Active/helion/logs/%j_thresh_sweep.out
 #SBATCH --error=/storage3/fs1/shandley/Active/helion/logs/%j_thresh_sweep.err
 
@@ -55,7 +55,7 @@ echo "Predicted: $(grep -c CDS ${PRED} 2>/dev/null || echo 0) CDS lines"
 
 echo ""
 echo "=== helion evaluate ==="
-helion evaluate "${REF}" "${PRED}" "${FA}"
+helion evaluate "${REF}" "${PRED}" "${FA}" --strand-aware
 
 echo ""
 echo "Finished: $(date)"
