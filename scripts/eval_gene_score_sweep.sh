@@ -11,8 +11,11 @@
 #SBATCH --error=/storage3/fs1/shandley/Active/helion/logs/%j_gene_score_sweep.err
 
 # Sweep --min-gene-score at fixed threshold to find optimal post-filter cutoff.
-# Optional overrides via --export: THRESHOLD, ORGANISM, MODEL, CHROM
-# Runs sequentially in one job to avoid concurrent git lock collisions.
+# Predict ONCE with no filter, write mean_exon_score into gene GFF3 attributes,
+# then filter+evaluate at each score cutoff using filter_gff3_by_score.py.
+# This avoids re-running the expensive prediction step for each cutoff.
+#
+# Optional overrides via --export: THRESHOLD, ORGANISM, MODEL, CHROM, SCORES
 
 set -euo pipefail
 
@@ -46,22 +49,29 @@ flock -x -w 120 "${H}/.maturin_build.lock" maturin develop 2>&1
 
 FA="${H}/results/${MODEL%_v*}_chr${CHROM}.fa"
 REF="${H}/results/ref_${MODEL%_v*}_chr${CHROM}.gff3"
+RAW="${H}/results/pred_${MODEL}_chr${CHROM}_t${THRESHOLD}_gs_raw.gff3"
+
+echo "=== helion predict (no score filter) ==="
+helion predict \
+    "${FA}" \
+    "${RAW}" \
+    --model     "${H}/models/${MODEL}" \
+    --organism  "${ORGANISM}" \
+    --threshold "${THRESHOLD}" \
+    --device    cpu
+
+N_CDS=$(grep -c CDS "${RAW}" 2>/dev/null || echo 0)
+echo "Raw predicted: ${N_CDS} CDS lines"
+echo ""
 
 for SCORE in ${SCORES}; do
     PRED="${H}/results/pred_${MODEL}_chr${CHROM}_t${THRESHOLD}_gs${SCORE}.gff3"
 
     echo "=== min-gene-score=${SCORE} ==="
-    helion predict \
-        "${FA}" \
-        "${PRED}" \
-        --model         "${H}/models/${MODEL}" \
-        --organism      "${ORGANISM}" \
-        --threshold     "${THRESHOLD}" \
-        --min-gene-score "${SCORE}" \
-        --device        cpu
+    python3 "${H}/scripts/filter_gff3_by_score.py" "${RAW}" "${PRED}" "${SCORE}"
 
     N_CDS=$(grep -c CDS "${PRED}" 2>/dev/null || echo 0)
-    echo "Predicted: ${N_CDS} CDS lines"
+    echo "Filtered: ${N_CDS} CDS lines"
     echo ""
     helion evaluate "${REF}" "${PRED}" "${FA}" --strand-aware
     echo ""

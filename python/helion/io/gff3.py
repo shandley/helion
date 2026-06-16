@@ -16,7 +16,12 @@ def write_gff3(models: list[GeneModel], path: Path) -> None:
         for i, model in enumerate(models, start=1):
             gene_id = f"gene_{i:06d}"
             mrna_id = f"mrna_{i:06d}"
-            _write_record(f, model.seqid, "gene", model.start, model.end, model.strand, gene_id)
+            n_exons = len(model.exons)
+            mean_score = model.score / n_exons if n_exons else 0.0
+            _write_record(
+                f, model.seqid, "gene", model.start, model.end, model.strand, gene_id,
+                score=mean_score,
+            )
             _write_record(
                 f, model.seqid, "mRNA", model.start, model.end, model.strand, mrna_id,
                 parent=gene_id, score=model.score,
