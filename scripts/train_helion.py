@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--channels", type=int, default=256)
     p.add_argument("--device", default="cuda")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--neg-fraction", type=float, default=0.0,
+                   help="ratio of hard-negative intergenic windows to genic windows (0=disabled)")
     return p.parse_args()
 
 
@@ -87,6 +89,7 @@ def main() -> None:
         channels=args.channels,
         device=device,
         workers=args.workers,
+        neg_fraction=args.neg_fraction,
     )
 
     elapsed = time.time() - t0

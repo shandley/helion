@@ -31,6 +31,7 @@ def train_model(
     channels: int = 256,
     device: str = "cpu",
     workers: int = 4,
+    neg_fraction: float = 0.0,
 ) -> SignalModel:
     """
     Train a Helion signal model.
@@ -48,7 +49,7 @@ def train_model(
         train_ds = SignalDataset(
             genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="train",
-            centered_sampling=True,
+            centered_sampling=True, neg_fraction=neg_fraction,
         )
         val_ds = SignalDataset(
             genome, annotations, window_size=window_size, organism=organism,

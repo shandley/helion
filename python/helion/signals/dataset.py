@@ -58,6 +58,25 @@ def parse_gff3(path: Path) -> list[GFF3Gene]:
     return [g for g in genes.values() if g.exons]
 
 
+_INTERGENIC_BUFFER = 2000  # bp around each gene boundary excluded from hard-negative sampling
+
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge a list of (start, end) intervals into non-overlapping sorted intervals."""
+    if not intervals:
+        return []
+    lo, hi = sorted(intervals)[0]
+    result: list[tuple[int, int]] = []
+    for start, end in sorted(intervals)[1:]:
+        if start <= hi:
+            hi = max(hi, end)
+        else:
+            result.append((lo, hi))
+            lo, hi = start, end
+    result.append((lo, hi))
+    return result
+
+
 def _extract_attr(attrs: str, key: str) -> str | None:
     for part in attrs.split(";"):
         if part.startswith(f"{key}="):
@@ -106,6 +125,7 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         val_chromosomes: list[str] | None = None,
         split: str = "train",
         centered_sampling: bool = False,
+        neg_fraction: float = 0.0,
     ) -> None:
         self.genome = genome
         self.window_size = window_size
@@ -125,6 +145,15 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
             self.genes = all_genes
 
         self.windows = list(self._build_windows())
+        if neg_fraction > 0.0 and split == "train":
+            n_neg = max(1, int(len(self.windows) * neg_fraction))
+            neg_windows = self._sample_intergenic_windows(n_neg)
+            self.windows.extend(neg_windows)
+            print(
+                f"Hard negatives: {len(neg_windows):,} intergenic windows "
+                f"(target {n_neg:,}, {len(self.windows):,} total)",
+                flush=True,
+            )
         self._fasta.close()
         del self._fasta
 
@@ -168,6 +197,64 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
                 # Sliding window (used for val and fungus random-split fallback).
                 for i in range(0, L - self.window_size + 1, self.window_size // 2):
                     yield seq[i:i + self.window_size], labels[i:i + self.window_size]
+
+    def _sample_intergenic_windows(self, n: int) -> list[tuple[str, npt.NDArray[np.int8]]]:
+        """Sample n windows from intergenic regions, all positions labeled class 7."""
+        rng = np.random.default_rng(seed=42)
+
+        # Only sample from train chromosomes -- never fasta.keys(), which includes val chrom
+        train_seqids = {g.seqid for g in self.genes}
+
+        # Covered intervals: gene span ± buffer per chromosome
+        covered: dict[str, list[tuple[int, int]]] = {sid: [] for sid in train_seqids}
+        for gene in self.genes:
+            covered[gene.seqid].append((
+                max(0, gene.start - _INTERGENIC_BUFFER),
+                gene.end + _INTERGENIC_BUFFER,
+            ))
+
+        # Enumerate all non-overlapping candidate window starts in uncovered gaps
+        candidates: list[tuple[str, int]] = []  # (seqid, window_start)
+        for seqid in sorted(train_seqids):
+            chr_len = len(self._fasta[seqid])
+            merged = _merge_intervals(covered.get(seqid, []))
+            pos = 0
+            for ivl_start, ivl_end in merged:
+                while pos + self.window_size <= ivl_start:
+                    candidates.append((seqid, pos))
+                    pos += self.window_size
+                pos = max(pos, ivl_end)
+            while pos + self.window_size <= chr_len:
+                candidates.append((seqid, pos))
+                pos += self.window_size
+
+        if not candidates:
+            print("WARNING: no intergenic candidate windows found", flush=True)
+            return []
+
+        # Over-sample 2x to absorb N-rich windows (centromeric/telomeric gaps)
+        n_draw = min(2 * n, len(candidates))
+        drawn = rng.choice(len(candidates), size=n_draw, replace=False)
+
+        intergenic_label = np.int8(N_CLASSES - 1)
+        result: list[tuple[str, npt.NDArray[np.int8]]] = []
+        for raw_idx in drawn:
+            if len(result) >= n:
+                break
+            seqid, w_start = candidates[int(raw_idx)]
+            seq = str(self._fasta[seqid][w_start:w_start + self.window_size])
+            if len(seq) < self.window_size:
+                continue
+            # Skip windows predominantly composed of N (assembly gaps)
+            seq_upper = seq.upper()
+            acgt = (seq_upper.count("A") + seq_upper.count("C")
+                    + seq_upper.count("G") + seq_upper.count("T"))
+            if acgt / len(seq) < 0.9:
+                continue
+            labels = np.full(self.window_size, intergenic_label, dtype=np.int8)
+            result.append((seq, labels))
+
+        return result
 
     def compute_class_weights(self) -> torch.Tensor:
         """Class weights for weighted cross-entropy.
