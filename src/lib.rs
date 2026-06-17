@@ -8,12 +8,14 @@ pub use graph::{Dag, ExonNode};
 pub use viterbi::GeneModel;
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     donor_scores,
     acceptor_scores,
     start_scores,
     stop_scores,
     coding_scores,
+    intergenic_scores = None,
     homology_scores = None,
     organism = "vertebrate",
     threshold = 0.1,
@@ -24,6 +26,7 @@ fn build_dag(
     start_scores: Vec<f32>,
     stop_scores: Vec<f32>,
     coding_scores: Vec<Vec<f32>>, // (seq_len, 3)
+    intergenic_scores: Option<Vec<f32>>,
     homology_scores: Option<Vec<f32>>,
     organism: &str,
     threshold: f32,
@@ -35,6 +38,7 @@ fn build_dag(
         &start_scores,
         &stop_scores,
         &coding_scores,
+        intergenic_scores.as_deref(),
         homology_scores.as_deref(),
         &constraints,
         threshold,

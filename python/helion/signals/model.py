@@ -25,6 +25,7 @@ class SignalScores:
     start: npt.NDArray[np.float32]      # (seq_len,)
     stop: npt.NDArray[np.float32]       # (seq_len,)
     coding: npt.NDArray[np.float32]     # (seq_len, 3)  -- frame 0/1/2
+    intergenic: npt.NDArray[np.float32] # (seq_len,)
 
 
 class ResidualBlock(nn.Module):
@@ -87,6 +88,7 @@ class SignalModel(nn.Module):
             start=probs[2],
             stop=probs[3],
             coding=probs[4:7].T,  # (L, 3)
+            intergenic=probs[7],
         )
 
     def save(self, path: Path) -> None:

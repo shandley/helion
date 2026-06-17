@@ -71,6 +71,7 @@ def predict(
                 start_scores=scores.start.tolist(),
                 stop_scores=scores.stop.tolist(),
                 coding_scores=scores.coding.tolist(),
+                intergenic_scores=scores.intergenic.tolist(),
                 homology_scores=homology_scores.tolist() if homology_scores is not None else None,
                 organism=organism,
                 threshold=threshold,

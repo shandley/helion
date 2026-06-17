@@ -29,6 +29,7 @@ pub fn build(
     start_scores: &[f32],
     stop_scores: &[f32],
     coding_scores: &[Vec<f32>],
+    intergenic_scores: Option<&[f32]>,
     homology_scores: Option<&[f32]>,
     constraints: &OrganismConstraints,
     threshold: f32,
@@ -76,10 +77,15 @@ pub fn build(
                     .map(|h| h[s..e].iter().sum::<f32>() / exon_len as f32)
                     .unwrap_or(0.0);
 
+                let mean_intergenic = intergenic_scores
+                    .map(|ig| ig[s..e].iter().sum::<f32>() / exon_len as f32)
+                    .unwrap_or(0.0);
+
                 let score = donor_scores[e.saturating_sub(1)]
                     + acceptor_scores[s]
                     + coding_score
-                    + homology;
+                    + homology
+                    - mean_intergenic;
 
                 nodes.push(ExonNode { start: s, end: e, frame, score, homology });
             }
