@@ -122,6 +122,156 @@ def load_exon_transcripts(gff3_path: Path, strand_aware: bool) -> dict[ExonKey, 
 
 
 # ---------------------------------------------------------------------------
+# Splice-consensus audit (quantifies the expected gain from enforcing GT-AG).
+#
+# Boundary conventions, derived against dataset.py:_make_labels and graph.rs:
+#   exon = 0-based half-open [s, e):  s = first coding base, e = first intronic
+#   base (exclusive end). Every exon has a genomic-LOW boundary (examine
+#   seq[s-2:s], the two bases just before the exon) and a genomic-HIGH boundary
+#   (examine seq[e:e+2], the two bases just after it). Which is donor vs acceptor,
+#   and the expected dinucleotide, depends on strand (minus strand is the reverse
+#   complement):
+#     + low  = acceptor -> AG          - low  = donor    -> AC  (rc of GT) / GC
+#     + high = donor    -> GT / GC     - high = acceptor -> CT  (rc of AG)
+# A "splice" boundary is any exon boundary shared with an adjacent intron, i.e.
+# not the transcript's outermost ends (those are the start/stop codon, not a
+# splice site, so GT-AG enforcement does not apply there).
+# ---------------------------------------------------------------------------
+
+# (seqid, s, e) -> (strand, low_is_splice, high_is_splice)
+ExonRole = tuple[str, bool, bool]
+
+
+def load_genome(path: Path) -> dict[str, str]:
+    """Load a (possibly multi-record) FASTA into {seqid: uppercased sequence}."""
+    genome: dict[str, str] = {}
+    name: str | None = None
+    chunks: list[str] = []
+    with path.open() as f:
+        for line in f:
+            if line.startswith(">"):
+                if name is not None:
+                    genome[name] = "".join(chunks).upper()
+                name = line[1:].split()[0]
+                chunks = []
+            else:
+                chunks.append(line.strip())
+    if name is not None:
+        genome[name] = "".join(chunks).upper()
+    return genome
+
+
+def _seq_for(genome: dict[str, str], seqid: str) -> str | None:
+    """Look up a chromosome, tolerating a chr/no-chr prefix mismatch."""
+    if seqid in genome:
+        return genome[seqid]
+    alt = seqid[3:] if seqid.startswith("chr") else f"chr{seqid}"
+    return genome.get(alt)
+
+
+def _low_canonical(seq: str, s: int, strand: str, allow_gc: bool) -> bool:
+    if s < 2:
+        return False
+    di = seq[s - 2:s]
+    if strand == "+":  # acceptor AG
+        return di == "AG"
+    return di == "AC" or (allow_gc and di == "GC")  # minus-strand donor (rc of GT/GC)
+
+
+def _high_canonical(seq: str, e: int, strand: str, allow_gc: bool) -> bool:
+    if e + 2 > len(seq):
+        return False
+    di = seq[e:e + 2]
+    if strand == "+":  # donor GT/GC
+        return di == "GT" or (allow_gc and di == "GC")
+    return di == "CT"  # minus-strand acceptor (rc of AG)
+
+
+def _boundary_kind(strand: str, side: str) -> str:
+    if (strand == "+" and side == "low") or (strand == "-" and side == "high"):
+        return "acceptor"
+    return "donor"
+
+
+def load_exon_roles(gff3_path: Path) -> dict[tuple[str, int, int], ExonRole]:
+    """For every exon, record its strand and whether each genomic boundary is a
+    splice site (vs a transcript-terminal start/stop boundary).
+
+    An exon's low boundary is a splice site iff it is not the genomic-lowest exon
+    of a transcript; its high boundary iff not the genomic-highest. Flags are
+    OR-ed across transcripts (a boundary counts as splice if it is one anywhere).
+    """
+    mrna_strand: dict[str, str] = {}
+    cds_by_parent: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+    with gff3_path.open() as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            parts = line.rstrip().split("\t")
+            if len(parts) < 9 or parts[2] not in ("mRNA", "CDS"):
+                continue
+            seqid = parts[0]
+            start = int(parts[3]) - 1
+            end = int(parts[4])
+            strand = parts[6] if parts[6] in ("+", "-") else "."
+            attrs = parts[8]
+            if parts[2] == "mRNA":
+                mrna_strand[_extract_attr(attrs, "ID") or ""] = strand
+            else:
+                cds_by_parent[_extract_attr(attrs, "Parent") or ""].append((seqid, start, end))
+
+    roles: dict[tuple[str, int, int], ExonRole] = {}
+    for tid, cds_list in cds_by_parent.items():
+        strand = mrna_strand.get(tid, ".")
+        ordered = sorted(set(cds_list))
+        n = len(ordered)
+        for idx, (seqid, s, e) in enumerate(ordered):
+            low_sp, high_sp = idx > 0, idx < n - 1
+            key = (seqid, s, e)
+            if key in roles:
+                st, ls, hs = roles[key]
+                roles[key] = (st, ls or low_sp, hs or high_sp)
+            else:
+                roles[key] = (strand, low_sp, high_sp)
+    return roles
+
+
+def _consensus_tally(
+    roles: dict[tuple[str, int, int], ExonRole], genome: dict[str, str], allow_gc: bool
+) -> dict[str, list[int]]:
+    """Count canonical/total at acceptor and donor splice boundaries."""
+    tally: dict[str, list[int]] = {"acceptor": [0, 0], "donor": [0, 0]}
+    for (seqid, s, e), (strand, low_sp, high_sp) in roles.items():
+        if strand not in ("+", "-"):
+            continue
+        seq = _seq_for(genome, seqid)
+        if seq is None:
+            continue
+        if low_sp:
+            kind = _boundary_kind(strand, "low")
+            tally[kind][1] += 1
+            tally[kind][0] += int(_low_canonical(seq, s, strand, allow_gc))
+        if high_sp:
+            kind = _boundary_kind(strand, "high")
+            tally[kind][1] += 1
+            tally[kind][0] += int(_high_canonical(seq, e, strand, allow_gc))
+    return tally
+
+
+def _nearest_canonical(
+    seq: str, pos: int, side: str, strand: str, allow_gc: bool, window: int
+) -> int | None:
+    """Nearest position to `pos` (within +/-window) whose `side` boundary is
+    canonical. Ties resolve toward the smaller offset, then downstream."""
+    check = _low_canonical if side == "low" else _high_canonical
+    for d in range(window + 1):
+        for cand in ((pos,) if d == 0 else (pos - d, pos + d)):
+            if check(seq, cand, strand, allow_gc):
+                return cand
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Matching -- mirrors evaluate.py:_exon_metrics (lines 256-290) exactly.
 #
 # The greedy bisect algorithm there generalises the exact-match set logic:
@@ -223,7 +373,15 @@ def _pct(n: int, d: int) -> str:
     return f"{(100.0 * n / d):.1f}%" if d else "n/a"
 
 
-def run(ref_path: Path, pred_path: Path, tolerance: int, strand_aware: bool) -> str:
+def run(
+    ref_path: Path,
+    pred_path: Path,
+    genome_path: Path,
+    tolerance: int,
+    strand_aware: bool,
+    allow_gc: bool,
+    snap_window: int,
+) -> str:
     ref = load_cds_intervals(ref_path)
     pred = load_cds_intervals(pred_path)
 
@@ -240,12 +398,22 @@ def run(ref_path: Path, pred_path: Path, tolerance: int, strand_aware: bool) -> 
     pred_index = IntervalIndex(pred)
     ref_index = IntervalIndex(ref)
 
+    # Splice-consensus inputs for the expected-gain estimate.
+    genome = load_genome(genome_path)
+    ref_roles = load_exon_roles(ref_path)
+    pred_roles = load_exon_roles(pred_path)
+    ref_audit = _consensus_tally(ref_roles, genome, allow_gc)
+    pred_audit = _consensus_tally(pred_roles, genome, allow_gc)
+
     n_boundary = n_undetected = n_isoform = 0
     abs_start_offsets: list[int] = []
     abs_end_offsets: list[int] = []
+    signed_start_offsets: list[int] = []
+    signed_end_offsets: list[int] = []
     # Per boundary-off exon: min over overlapping preds of max(|d_start|,|d_end|).
     # An exon is recoverable at tolerance t iff this value <= t.
     min_max_offsets: list[int] = []
+    n_snap_recoverable = 0  # BOUNDARY_OFF exons made exact by snapping to GT-AG
 
     for seqid, rs, re, rst in missed:
         overlapping_preds = pred_index.overlaps(seqid, rs, re, rst, strand_aware)
@@ -275,13 +443,17 @@ def run(ref_path: Path, pred_path: Path, tolerance: int, strand_aware: bool) -> 
             n_boundary += 1
             # Best overlapping prediction = smallest total boundary error.
             best = min(overlapping_preds, key=lambda p: abs(p[0] - rs) + abs(p[1] - re))
-            d_start = abs(best[0] - rs)
-            d_end = abs(best[1] - re)
-            abs_start_offsets.append(d_start)
-            abs_end_offsets.append(d_end)
+            abs_start_offsets.append(abs(best[0] - rs))
+            abs_end_offsets.append(abs(best[1] - re))
+            signed_start_offsets.append(best[0] - rs)
+            signed_end_offsets.append(best[1] - re)
             # Smallest worst-boundary error across all overlapping preds.
             min_max = min(max(abs(p[0] - rs), abs(p[1] - re)) for p in overlapping_preds)
             min_max_offsets.append(min_max)
+            if _is_snap_recoverable(
+                genome, ref_roles, seqid, rs, re, best[0], best[1], tolerance, allow_gc, snap_window
+            ):
+                n_snap_recoverable += 1
         else:
             n_undetected += 1
 
@@ -290,6 +462,8 @@ def run(ref_path: Path, pred_path: Path, tolerance: int, strand_aware: bool) -> 
         pred_path=pred_path,
         tolerance=tolerance,
         strand_aware=strand_aware,
+        allow_gc=allow_gc,
+        snap_window=snap_window,
         n_ref=len(ref_keys),
         n_matched=len(matched),
         n_missed=len(missed),
@@ -298,8 +472,66 @@ def run(ref_path: Path, pred_path: Path, tolerance: int, strand_aware: bool) -> 
         n_isoform=n_isoform,
         abs_start_offsets=abs_start_offsets,
         abs_end_offsets=abs_end_offsets,
+        signed_start_offsets=signed_start_offsets,
+        signed_end_offsets=signed_end_offsets,
         min_max_offsets=min_max_offsets,
+        ref_audit=ref_audit,
+        pred_audit=pred_audit,
+        n_snap_recoverable=n_snap_recoverable,
     )
+
+
+def _is_snap_recoverable(
+    genome: dict[str, str],
+    ref_roles: dict[tuple[str, int, int], ExonRole],
+    seqid: str,
+    rs: int,
+    re: int,
+    pred_s: int,
+    pred_e: int,
+    tolerance: int,
+    allow_gc: bool,
+    window: int,
+) -> bool:
+    """Would enforcing GT-AG make this BOUNDARY_OFF exon an exact match?
+
+    Estimate: snap each predicted boundary to the nearest canonical dinucleotide
+    (within +/-window) and ask whether it lands on the reference boundary. A
+    splice boundary can snap; a transcript-terminal boundary (start/stop codon)
+    cannot, so it must already match within tolerance. Optimistic: assumes the
+    decoder would pick the nearest canonical site, which it may not.
+    """
+    role = ref_roles.get((seqid, rs, re))
+    if role is None:
+        return False
+    strand, low_sp, high_sp = role
+    if strand not in ("+", "-"):
+        return False
+    seq = _seq_for(genome, seqid)
+    if seq is None:
+        return False
+
+    if low_sp:
+        if _nearest_canonical(seq, pred_s, "low", strand, allow_gc, window) != rs:
+            return False
+    elif abs(pred_s - rs) > tolerance:
+        return False
+
+    if high_sp:
+        if _nearest_canonical(seq, pred_e, "high", strand, allow_gc, window) != re:
+            return False
+    elif abs(pred_e - re) > tolerance:
+        return False
+
+    return True
+
+
+def _audit_line(label: str, tally: dict[str, list[int]]) -> str:
+    parts = []
+    for kind in ("acceptor", "donor"):
+        canon, total = tally[kind]
+        parts.append(f"{kind} {_pct(canon, total)} (n={total:,})")
+    return f"  {label:<26} {parts[0]}   {parts[1]}"
 
 
 def _format_report(
@@ -308,6 +540,8 @@ def _format_report(
     pred_path: Path,
     tolerance: int,
     strand_aware: bool,
+    allow_gc: bool,
+    snap_window: int,
     n_ref: int,
     n_matched: int,
     n_missed: int,
@@ -316,7 +550,12 @@ def _format_report(
     n_isoform: int,
     abs_start_offsets: list[int],
     abs_end_offsets: list[int],
+    signed_start_offsets: list[int],
+    signed_end_offsets: list[int],
     min_max_offsets: list[int],
+    ref_audit: dict[str, list[int]],
+    pred_audit: dict[str, list[int]],
+    n_snap_recoverable: int,
 ) -> str:
     lines: list[str] = []
     lines.append("Helion recall diagnostic -- why are reference exons missed?")
@@ -362,6 +601,14 @@ def _format_report(
             f"  |end   offset|:  median {np.median(arr_e):.0f} nt   "
             f"p90 {np.percentile(arr_e, 90):.0f} nt"
         )
+        lines.append(
+            f"  signed start:    median {np.median(np.array(signed_start_offsets)):+.0f} nt   "
+            f"mean {np.mean(np.array(signed_start_offsets)):+.1f} nt  (pred - ref)"
+        )
+        lines.append(
+            f"  signed end:      median {np.median(np.array(signed_end_offsets)):+.0f} nt   "
+            f"mean {np.mean(np.array(signed_end_offsets)):+.1f} nt  (pred - ref)"
+        )
         lines.append("")
         lines.append("  Recoverable as TP if boundary tolerance were relaxed:")
         mm = np.array(min_max_offsets)
@@ -373,6 +620,39 @@ def _format_report(
             )
     else:
         lines.append("  (no BOUNDARY_OFF exons)")
+    lines.append("")
+
+    # Expected gain from enforcing the splice dinucleotide (GT-AG / GC-AG).
+    gc_note = "GT/GC donor, AG acceptor" if allow_gc else "GT donor, AG acceptor"
+    lines.append(f"Splice-consensus audit (canonical = {gc_note}; strand-aware)")
+    lines.append(_audit_line("reference splice sites:", ref_audit))
+    lines.append(_audit_line("predicted splice sites:", pred_audit))
+    ref_total = sum(ref_audit[k][1] for k in ref_audit)
+    ref_canon = sum(ref_audit[k][0] for k in ref_audit)
+    pred_total = sum(pred_audit[k][1] for k in pred_audit)
+    pred_canon = sum(pred_audit[k][0] for k in pred_audit)
+    lines.append(
+        f"  -> reference {_pct(ref_canon, ref_total)} canonical vs predicted "
+        f"{_pct(pred_canon, pred_total)}: the gap is headroom the decoder ignores."
+    )
+    lines.append("")
+    lines.append(
+        f"Expected gain: snap predicted boundaries to nearest GT-AG (+/-{snap_window} nt)"
+    )
+    lines.append(
+        f"  +{n_snap_recoverable:,} BOUNDARY_OFF exons become exact "
+        f"({_pct(n_snap_recoverable, n_boundary)} of BOUNDARY_OFF, "
+        f"{_pct(n_snap_recoverable, n_ref)} of all reference exons)"
+    )
+    recovered_recall = n_matched + n_snap_recoverable
+    lines.append(
+        f"  estimated recall: {_pct(n_matched, n_ref)} -> {_pct(recovered_recall, n_ref)} "
+        f"({n_matched:,} -> {recovered_recall:,} TP)"
+    )
+    lines.append(
+        "  NOTE optimistic: assumes the decoder picks the nearest canonical site; "
+        "it re-scores, so treat as an upper-ish bound."
+    )
     lines.append("")
 
     # Interpretation hints.
@@ -403,16 +683,27 @@ def main() -> None:
     )
     parser.add_argument(
         "--genome", type=Path, default=DEFAULT_GENOME,
-        help="Genome FASTA (accepted for interface parity; unused for exon-level matching)",
+        help="Genome FASTA (read for the splice-consensus / expected-gain audit)",
     )
     parser.add_argument("--tolerance", type=int, default=0, help="Boundary tolerance in nt")
     parser.add_argument(
         "--strand-aware", action=argparse.BooleanOptionalAction, default=False,
         help="Require predicted and reference exons to share strand",
     )
+    parser.add_argument(
+        "--allow-gc-donor", action=argparse.BooleanOptionalAction, default=True,
+        help="Count GC (not just GT) as a canonical donor (vertebrate/plant)",
+    )
+    parser.add_argument(
+        "--snap-window", type=int, default=30,
+        help="Max nt to snap a predicted boundary to a canonical site in the gain estimate",
+    )
     args = parser.parse_args()
 
-    print(run(args.ref, args.pred, args.tolerance, args.strand_aware))
+    print(run(
+        args.ref, args.pred, args.genome, args.tolerance,
+        args.strand_aware, args.allow_gc_donor, args.snap_window,
+    ))
 
 
 if __name__ == "__main__":
