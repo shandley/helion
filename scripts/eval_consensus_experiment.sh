@@ -25,9 +25,11 @@ H="/storage3/fs1/shandley/Active/helion"
 CONDA_SH="/storage3/fs1/shandley/Active/echobase/miniforge/etc/profile.d/conda.sh"
 THRESHOLD="${THRESHOLD:-0.3}"
 DEVICE="${DEVICE:-cuda}"  # H100 prediction; CPU is ~1.5-2h per chr22, GPU is minutes
+MODEL="${MODEL:-vertebrate_v3}"  # vertebrate_v4 stacks hard-neg FP suppression with the decoder fixes
 
 echo "Job ID:    ${SLURM_JOB_ID}"
 echo "Node:      ${SLURMD_NODENAME}"
+echo "Model:     ${MODEL}"
 echo "Threshold: ${THRESHOLD}"
 echo "Device:    ${DEVICE}"
 echo "Started:   $(date)"
@@ -50,15 +52,15 @@ python -m pytest tests/test_assembly.py -q
 
 FA="${H}/results/vertebrate_chr22.fa"
 REF="${H}/results/ref_vertebrate_chr22.gff3"
-PRED="${H}/results/pred_vertebrate_v3_chr22_t${THRESHOLD}_gs0.0_consensus.gff3"
+PRED="${H}/results/pred_${MODEL}_chr22_t${THRESHOLD}_gs0.0_consensus.gff3"
 
 echo ""
-echo "=== helion predict (vertebrate_v3 + consensus decoder, chr22, t=${THRESHOLD}) ==="
+echo "=== helion predict (${MODEL} + consensus decoder, chr22, t=${THRESHOLD}) ==="
 python3 -c "import torch; print('CUDA available:', torch.cuda.is_available(), '| device:', '${DEVICE}')"
 helion predict \
     "${FA}" \
     "${PRED}" \
-    --model     "${H}/models/vertebrate_v3" \
+    --model     "${H}/models/${MODEL}" \
     --organism  vertebrate \
     --threshold "${THRESHOLD}" \
     --device    "${DEVICE}"
