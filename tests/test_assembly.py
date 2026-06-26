@@ -52,6 +52,41 @@ def test_build_dag_finds_simple_gene() -> None:
     assert m.end <= 200
 
 
+def test_consensus_filter_rejects_non_codon_start() -> None:
+    """With a sequence, a start candidate must carry an ATG (or acceptor AG);
+    otherwise the single-exon gene cannot be assembled."""
+    L = 500
+    start = _flat_scores(L)
+    stop = _flat_scores(L)
+    coding = _coding_scores(L)
+    start[50] = 0.9
+    stop[200] = 0.9
+    for i in range(50, 200):
+        coding[i] = [0.8, 0.1, 0.1]
+
+    # Sequence with a real start codon at 50 and a stop codon at [197, 200).
+    seq = list("C" * L)
+    seq[50:53] = list("ATG")
+    seq[197:200] = list("TAA")
+
+    kwargs = dict(
+        donor_scores=_flat_scores(L),
+        acceptor_scores=_flat_scores(L),
+        start_scores=start,
+        stop_scores=stop,
+        coding_scores=coding,
+        threshold=0.5,
+    )
+
+    dag = build_dag(sequence="".join(seq), **kwargs)
+    assert len(viterbi_decode(dag)) >= 1
+
+    # Break the start codon: no ATG (and no AG acceptor) at position 50 -> rejected.
+    seq[50:53] = list("CCC")
+    dag_bad = build_dag(sequence="".join(seq), **kwargs)
+    assert viterbi_decode(dag_bad) == []
+
+
 def test_organism_constraints_applied() -> None:
     L = 200
     dag_vertebrate = build_dag(

@@ -17,6 +17,7 @@ pub use viterbi::GeneModel;
     coding_scores,
     intergenic_scores = None,
     homology_scores = None,
+    sequence = None,
     organism = "vertebrate",
     threshold = 0.1,
 ))]
@@ -28,10 +29,12 @@ fn build_dag(
     coding_scores: Vec<Vec<f32>>, // (seq_len, 3)
     intergenic_scores: Option<Vec<f32>>,
     homology_scores: Option<Vec<f32>>,
+    sequence: Option<String>, // sense-oriented window sequence for consensus checks
     organism: &str,
     threshold: f32,
 ) -> PyResult<graph::PyDag> {
     let constraints = constraints::OrganismConstraints::for_organism(organism);
+    let seq_bytes = sequence.as_ref().map(|s| s.as_bytes());
     let dag = graph::build(
         &donor_scores,
         &acceptor_scores,
@@ -40,6 +43,7 @@ fn build_dag(
         &coding_scores,
         intergenic_scores.as_deref(),
         homology_scores.as_deref(),
+        seq_bytes,
         &constraints,
         threshold,
     );

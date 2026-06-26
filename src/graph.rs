@@ -31,19 +31,38 @@ pub fn build(
     coding_scores: &[Vec<f32>],
     intergenic_scores: Option<&[f32]>,
     homology_scores: Option<&[f32]>,
+    sequence: Option<&[u8]>,
     constraints: &OrganismConstraints,
     threshold: f32,
 ) -> Dag {
     let seq_len = donor_scores.len();
 
+    // When the sense-oriented sequence is available, require a candidate boundary
+    // to carry the real splice/codon consensus (GT-AG / GC-AG donor-acceptor, ATG
+    // start, stop codon). The CNN locates boundaries approximately; the consensus
+    // pins them and removes the ~15/16 of score-threshold positions that land on
+    // no valid dinucleotide. A start is valid as either an acceptor or a start
+    // codon; an end as either a donor or a stop codon (the DAG does not know which
+    // exons are terminal). With no sequence, fall back to score-only candidates.
+    let start_consensus = |i: usize| match sequence {
+        Some(seq) => constraints.valid_acceptor(seq, i) || constraints.valid_start(seq, i),
+        None => true,
+    };
+    let end_consensus = |i: usize| match sequence {
+        Some(seq) => constraints.valid_donor(seq, i) || constraints.valid_stop(seq, i),
+        None => true,
+    };
+
     // Candidate exon start positions (strong acceptor or start codon)
     let starts: Vec<usize> = (0..seq_len)
-        .filter(|&i| acceptor_scores[i] > threshold || start_scores[i] > threshold)
+        .filter(|&i| {
+            (acceptor_scores[i] > threshold || start_scores[i] > threshold) && start_consensus(i)
+        })
         .collect();
 
     // Candidate exon end positions (strong donor or stop codon)
     let ends: Vec<usize> = (0..seq_len)
-        .filter(|&i| donor_scores[i] > threshold || stop_scores[i] > threshold)
+        .filter(|&i| (donor_scores[i] > threshold || stop_scores[i] > threshold) && end_consensus(i))
         .collect();
 
     let mut nodes: Vec<ExonNode> = Vec::new();
@@ -81,7 +100,9 @@ pub fn build(
                     .map(|ig| ig[s..e].iter().sum::<f32>() / exon_len as f32)
                     .unwrap_or(0.0);
 
-                let score = donor_scores[e.saturating_sub(1)]
+                // Donor fires at e, the first intronic base (where it is labeled),
+                // not at e-1. e comes from 0..seq_len so indexing is in bounds.
+                let score = donor_scores[e]
                     + acceptor_scores[s]
                     + coding_score
                     + homology

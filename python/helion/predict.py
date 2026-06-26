@@ -73,6 +73,7 @@ def predict(
                 coding_scores=scores.coding.tolist(),
                 intergenic_scores=scores.intergenic.tolist(),
                 homology_scores=homology_scores.tolist() if homology_scores is not None else None,
+                sequence=seq,  # sense-oriented; enables GT-AG / codon consensus filtering
                 organism=organism,
                 threshold=threshold,
             )
