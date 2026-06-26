@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=helion-consensus-expt
 #SBATCH --account=compute2-shandley
-#SBATCH --partition=general-cpu
+#SBATCH --partition=general-gpu
+#SBATCH --gres=gpu:H100:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --time=6:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=2:00:00
 #SBATCH --output=/storage3/fs1/shandley/Active/helion/logs/%j_consensus_expt.out
 #SBATCH --error=/storage3/fs1/shandley/Active/helion/logs/%j_consensus_expt.err
 
@@ -23,10 +24,12 @@ set -euo pipefail
 H="/storage3/fs1/shandley/Active/helion"
 CONDA_SH="/storage3/fs1/shandley/Active/echobase/miniforge/etc/profile.d/conda.sh"
 THRESHOLD="${THRESHOLD:-0.3}"
+DEVICE="${DEVICE:-cuda}"  # H100 prediction; CPU is ~1.5-2h per chr22, GPU is minutes
 
 echo "Job ID:    ${SLURM_JOB_ID}"
 echo "Node:      ${SLURMD_NODENAME}"
 echo "Threshold: ${THRESHOLD}"
+echo "Device:    ${DEVICE}"
 echo "Started:   $(date)"
 echo ""
 
@@ -51,13 +54,14 @@ PRED="${H}/results/pred_vertebrate_v3_chr22_t${THRESHOLD}_gs0.0_consensus.gff3"
 
 echo ""
 echo "=== helion predict (vertebrate_v3 + consensus decoder, chr22, t=${THRESHOLD}) ==="
+python3 -c "import torch; print('CUDA available:', torch.cuda.is_available(), '| device:', '${DEVICE}')"
 helion predict \
     "${FA}" \
     "${PRED}" \
     --model     "${H}/models/vertebrate_v3" \
     --organism  vertebrate \
     --threshold "${THRESHOLD}" \
-    --device    cpu
+    --device    "${DEVICE}"
 echo "Predicted: $(grep -c CDS "${PRED}" 2>/dev/null || echo 0) CDS lines"
 
 echo ""

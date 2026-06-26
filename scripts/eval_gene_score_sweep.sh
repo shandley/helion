@@ -26,6 +26,7 @@ THRESHOLD="${THRESHOLD:-0.3}"
 ORGANISM="${ORGANISM:-insect}"
 MODEL="${MODEL:-drosophila_v3}"
 CHROM="${CHROM:-4}"
+DEVICE="${DEVICE:-cpu}"  # for GPU, submit with: --partition=general-gpu --gres=gpu:H100:1 --export=ALL,DEVICE=cuda,...
 
 SCORES="${SCORES:-0.0 0.4 0.6 0.8 0.9 1.0 1.1 1.2 1.4}"
 
@@ -60,7 +61,7 @@ helion predict \
     --model     "${H}/models/${MODEL}" \
     --organism  "${ORGANISM}" \
     --threshold "${THRESHOLD}" \
-    --device    cpu
+    --device    "${DEVICE}"
 
 N_CDS=$(grep -c CDS "${RAW}" 2>/dev/null || echo 0)
 echo "Raw predicted: ${N_CDS} CDS lines"
