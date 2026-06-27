@@ -23,8 +23,9 @@ def test_model_output_shape() -> None:
     L = 200
     x = torch.zeros(1, 4, L)
     with torch.no_grad():
-        out = model(x)
-    assert out.shape == (1, N_CLASSES, L)
+        probs, dist = model(x)
+    assert probs.shape == (1, N_CLASSES, L)
+    assert dist is None  # no distance head by default
 
 
 def test_model_output_is_probability() -> None:
@@ -32,9 +33,20 @@ def test_model_output_is_probability() -> None:
     model.eval()
     x = torch.zeros(2, 4, 100)
     with torch.no_grad():
-        out = model(x)
-    sums = out.sum(dim=1)
+        probs, _ = model(x)
+    sums = probs.sum(dim=1)
     assert torch.allclose(sums, torch.ones_like(sums), atol=1e-5)
+
+
+def test_distance_head_output_shape() -> None:
+    model = SignalModel(channels=32, use_distance_head=True)
+    model.eval()
+    L = 200
+    x = torch.zeros(1, 4, L)
+    with torch.no_grad():
+        probs, dist = model(x)
+    assert probs.shape == (1, N_CLASSES, L)
+    assert dist is not None and dist.shape == (1, 2, L)
 
 
 def test_score_returns_signal_scores() -> None:
@@ -44,3 +56,12 @@ def test_score_returns_signal_scores() -> None:
     assert isinstance(scores, SignalScores)
     assert scores.donor.shape == (120,)
     assert scores.coding.shape == (120, 3)
+    assert scores.d_donor is None  # no distance head
+
+
+def test_score_with_distance_head() -> None:
+    model = SignalModel(channels=32, use_distance_head=True)
+    model.eval()
+    scores = model.score("ATGCATGCATGC" * 10)
+    assert scores.d_donor is not None and scores.d_donor.shape == (120,)
+    assert scores.d_acceptor is not None and scores.d_acceptor.shape == (120,)

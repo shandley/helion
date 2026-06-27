@@ -62,6 +62,25 @@ def _boundary_weighted_loss(
     return (w * per_pos).sum() / (w * cw_y).sum().clamp_min(1e-8)
 
 
+def _compute_loss(
+    probs: torch.Tensor,
+    dist_pred: torch.Tensor | None,
+    y: torch.Tensor,
+    dist_target: torch.Tensor,
+    class_weights: torch.Tensor,
+    emphasis: float,
+    radius: int,
+    exclude_labels: bool,
+    distance_weight: float,
+) -> torch.Tensor:
+    """Classification (boundary-weighted CE) plus optional signed-distance
+    regression (smooth-L1 against the [-1, 1] distance targets)."""
+    loss = _boundary_weighted_loss(probs, y, class_weights, emphasis, radius, exclude_labels)
+    if dist_pred is not None:
+        loss = loss + distance_weight * F.smooth_l1_loss(dist_pred, dist_target)
+    return loss
+
+
 def train_model(
     annotations: Path,
     genome: Path,
@@ -80,6 +99,8 @@ def train_model(
     boundary_emphasis: float = 0.0,
     boundary_radius: int = 3,
     boundary_exclude_labels: bool = False,
+    distance_head: bool = False,
+    distance_weight: float = 1.0,
 ) -> SignalModel:
     """
     Train a Helion signal model.
@@ -135,7 +156,13 @@ def train_model(
         num_workers=workers, pin_memory=(device != "cpu"),
     )
 
-    model = SignalModel(channels=channels).to(device)
+    print(
+        f"Distance head: {distance_head}"
+        + (f"  weight={distance_weight:.2f}" if distance_head else ""),
+        flush=True,
+    )
+
+    model = SignalModel(channels=channels, use_distance_head=distance_head).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -144,13 +171,14 @@ def train_model(
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = 0.0
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
+        for x, y, dist in train_loader:
+            x, y, dist = x.to(device), y.to(device), dist.to(device)
             optimizer.zero_grad()
-            logits = model(x)
-            loss = _boundary_weighted_loss(
-                logits, y, class_weights, boundary_emphasis, boundary_radius,
-                boundary_exclude_labels,
+            probs, dist_pred = model(x)
+            loss = _compute_loss(
+                probs, dist_pred, y, dist, class_weights,
+                boundary_emphasis, boundary_radius, boundary_exclude_labels,
+                distance_weight,
             )
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -159,7 +187,7 @@ def train_model(
 
         val_loss = _val_epoch(
             model, val_loader, class_weights, boundary_emphasis, boundary_radius,
-            boundary_exclude_labels, device
+            boundary_exclude_labels, distance_weight, device
         )
         scheduler.step()
 
@@ -185,16 +213,19 @@ def _val_epoch(
     boundary_emphasis: float,
     boundary_radius: int,
     boundary_exclude_labels: bool,
+    distance_weight: float,
     device: str,
 ) -> float:
     model.eval()
     total = 0.0
     with torch.no_grad():
-        for x, y in loader:
-            x, y = x.to(device), y.to(device)
-            loss = _boundary_weighted_loss(
-                model(x), y, class_weights, boundary_emphasis, boundary_radius,
-                boundary_exclude_labels,
+        for x, y, dist in loader:
+            x, y, dist = x.to(device), y.to(device), dist.to(device)
+            probs, dist_pred = model(x)
+            loss = _compute_loss(
+                probs, dist_pred, y, dist, class_weights,
+                boundary_emphasis, boundary_radius, boundary_exclude_labels,
+                distance_weight,
             )
             total += loss.item()
     return total / max(len(loader), 1)

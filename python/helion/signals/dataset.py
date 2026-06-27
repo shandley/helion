@@ -10,7 +10,7 @@ import torch
 from pyfaidx import Fasta  # type: ignore[import]
 from torch.utils.data import Dataset
 
-from helion.signals.model import N_CLASSES, _one_hot
+from helion.signals.model import DIST_W, N_CLASSES, _one_hot
 
 _RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
@@ -277,9 +277,45 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __len__(self) -> int:
         return len(self.windows)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         seq, labels = self.windows[idx]
-        return _one_hot(seq), torch.tensor(labels, dtype=torch.long)
+        dist = _distance_targets(labels)  # (2, L) normalised to [-1, 1]
+        return (
+            _one_hot(seq),
+            torch.tensor(labels, dtype=torch.long),
+            torch.from_numpy(dist),
+        )
+
+
+def _signed_distance_field(positions: npt.NDArray[np.int64], length: int) -> npt.NDArray[np.float32]:
+    """Signed distance (nt) from every position to the nearest site in `positions`.
+
+    Convention: value is `idx - nearest_site`, so 0 at a site, negative upstream,
+    positive downstream, clamped to [-DIST_W, DIST_W]. Empty `positions` (a window
+    with no such boundary) yields a saturated +DIST_W everywhere.
+    """
+    if len(positions) == 0:
+        return np.full(length, DIST_W, dtype=np.float32)
+    pos = np.sort(positions)
+    idx = np.arange(length)
+    ins = np.searchsorted(pos, idx)
+    left = np.clip(ins - 1, 0, len(pos) - 1)
+    right = np.clip(ins, 0, len(pos) - 1)
+    d_left = idx - pos[left]
+    d_right = idx - pos[right]
+    signed = np.where(np.abs(d_left) <= np.abs(d_right), d_left, d_right).astype(np.float32)
+    return np.clip(signed, -DIST_W, DIST_W)
+
+
+def _distance_targets(labels: npt.NDArray[np.int8]) -> npt.NDArray[np.float32]:
+    """Signed-distance regression targets for donor (label 0) and acceptor (label 1),
+    derived from the per-position class labels and normalised to [-1, 1]."""
+    L = len(labels)
+    donor_pos = np.nonzero(labels == 0)[0]
+    acceptor_pos = np.nonzero(labels == 1)[0]
+    d_donor = _signed_distance_field(donor_pos, L)
+    d_acceptor = _signed_distance_field(acceptor_pos, L)
+    return np.stack([d_donor, d_acceptor]) / DIST_W
 
 
 def _make_labels(gene: GFF3Gene) -> npt.NDArray[np.int8]:

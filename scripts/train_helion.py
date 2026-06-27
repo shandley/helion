@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
                    help="emphasize only the coding/intergenic transition positions next to a "
                         "boundary, not the splice/codon labels themselves (avoids compounding "
                         "with the large splice class weights)")
+    p.add_argument("--distance-head", action="store_true",
+                   help="add a signed-distance regression head (predict nt-distance to nearest "
+                        "donor/acceptor) trained with smooth-L1 alongside the classification loss")
+    p.add_argument("--distance-weight", type=float, default=1.0,
+                   help="weight of the distance regression loss relative to classification")
     return p.parse_args()
 
 
@@ -102,6 +107,8 @@ def main() -> None:
         boundary_emphasis=args.boundary_emphasis,
         boundary_radius=args.boundary_radius,
         boundary_exclude_labels=args.boundary_exclude_labels,
+        distance_head=args.distance_head,
+        distance_weight=args.distance_weight,
     )
 
     elapsed = time.time() - t0
