@@ -40,6 +40,7 @@ def predict(
     batch_size: int = 4,
     threshold: float = 0.1,
     min_gene_score: float = 0.0,
+    boundary_contrast: float = 0.0,
 ) -> list[PyGeneModel]:
     from helion._core import PyGeneModel as _PyGeneModel
     from helion._core import build_dag, viterbi_decode
@@ -76,6 +77,7 @@ def predict(
                 sequence=seq,  # sense-oriented; enables GT-AG / codon consensus filtering
                 organism=organism,
                 threshold=threshold,
+                boundary_contrast=boundary_contrast,
             )
 
             models = viterbi_decode(dag, strand)

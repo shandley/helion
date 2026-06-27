@@ -20,6 +20,7 @@ pub use viterbi::GeneModel;
     sequence = None,
     organism = "vertebrate",
     threshold = 0.1,
+    boundary_contrast = 0.0,
 ))]
 fn build_dag(
     donor_scores: Vec<f32>,
@@ -32,6 +33,7 @@ fn build_dag(
     sequence: Option<String>, // sense-oriented window sequence for consensus checks
     organism: &str,
     threshold: f32,
+    boundary_contrast: f32,
 ) -> PyResult<graph::PyDag> {
     let constraints = constraints::OrganismConstraints::for_organism(organism);
     let seq_bytes = sequence.as_ref().map(|s| s.as_bytes());
@@ -46,6 +48,7 @@ fn build_dag(
         seq_bytes,
         &constraints,
         threshold,
+        boundary_contrast,
     );
     Ok(graph::PyDag(dag))
 }

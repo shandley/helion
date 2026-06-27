@@ -52,7 +52,10 @@ python -m pytest tests/test_assembly.py -q
 
 FA="${H}/results/vertebrate_chr22.fa"
 REF="${H}/results/ref_vertebrate_chr22.gff3"
-PRED="${H}/results/pred_${MODEL}_chr22_t${THRESHOLD}_gs0.0_consensus.gff3"
+BOUNDARY_CONTRAST="${BOUNDARY_CONTRAST:-0.0}"
+BC_TAG=""
+[ "${BOUNDARY_CONTRAST}" != "0.0" ] && BC_TAG="_bc${BOUNDARY_CONTRAST}"
+PRED="${H}/results/pred_${MODEL}_chr22_t${THRESHOLD}_gs0.0_consensus${BC_TAG}.gff3"
 
 echo ""
 echo "=== helion predict (${MODEL} + consensus decoder, chr22, t=${THRESHOLD}) ==="
@@ -60,10 +63,11 @@ python3 -c "import torch; print('CUDA available:', torch.cuda.is_available(), '|
 helion predict \
     "${FA}" \
     "${PRED}" \
-    --model     "${H}/models/${MODEL}" \
-    --organism  vertebrate \
-    --threshold "${THRESHOLD}" \
-    --device    "${DEVICE}"
+    --model             "${H}/models/${MODEL}" \
+    --organism          vertebrate \
+    --threshold         "${THRESHOLD}" \
+    --boundary-contrast "${BOUNDARY_CONTRAST:-0.0}" \
+    --device            "${DEVICE}"
 echo "Predicted: $(grep -c CDS "${PRED}" 2>/dev/null || echo 0) CDS lines"
 
 echo ""

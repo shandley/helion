@@ -2,6 +2,7 @@ from pathlib import Path
 
 import torch  # type: ignore[import]
 import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
 from torch.utils.data import DataLoader  # type: ignore[import]
 
 from helion.signals.dataset import SignalDataset
@@ -15,6 +16,40 @@ _DEFAULT_VAL_CHROMS: dict[str, list[str]] = {
     "plant":      ["Chr4", "4"],           # Arabidopsis Chr4
     "fungus":     [],                      # too few chromosomes -- fall back to random
 }
+
+
+def _boundary_weighted_loss(
+    logits: torch.Tensor,
+    y: torch.Tensor,
+    class_weights: torch.Tensor,
+    emphasis: float,
+    radius: int,
+) -> torch.Tensor:
+    """
+    Per-position weighted cross-entropy that upweights boundary neighborhoods.
+
+    With emphasis <= 0 this is bit-identical to nn.CrossEntropyLoss(
+    weight=class_weights) default-mean reduction. With emphasis > 0, every
+    position within +/-radius of a boundary label (donor=0, acceptor=1,
+    start=2, stop=3) is weighted by (1 + emphasis), forcing the model to
+    localize boundaries sharply.
+
+    F.cross_entropy(..., reduction="none") already folds in the class weight,
+    so per_pos = class_weight[y] * CE. nn.CrossEntropyLoss(reduction="mean")
+    normalizes by the summed true-class weights (not the position count), so we
+    replicate that denominator to keep emphasis=0 identical and the emphasis>0
+    case a proper weighted average.
+    """
+    per_pos = F.cross_entropy(logits, y, weight=class_weights, reduction="none")  # (B, L)
+    cw_y = class_weights[y]  # (B, L) true-class weight at each position
+    if emphasis <= 0.0:
+        return per_pos.sum() / cw_y.sum().clamp_min(1e-8)
+    is_bnd = (y <= 3).float().unsqueeze(1)  # boundary labels -> (B, 1, L)
+    mask = F.max_pool1d(
+        is_bnd, kernel_size=2 * radius + 1, stride=1, padding=radius
+    ).squeeze(1)  # (B, L)
+    w = 1.0 + emphasis * mask
+    return (w * per_pos).sum() / (w * cw_y).sum().clamp_min(1e-8)
 
 
 def train_model(
@@ -32,6 +67,8 @@ def train_model(
     device: str = "cpu",
     workers: int = 4,
     neg_fraction: float = 0.0,
+    boundary_emphasis: float = 0.0,
+    boundary_radius: int = 3,
 ) -> SignalModel:
     """
     Train a Helion signal model.
@@ -72,6 +109,11 @@ def train_model(
     base_ds: SignalDataset = train_ds if isinstance(train_ds, SignalDataset) else train_ds.dataset  # type: ignore[assignment]
     class_weights = base_ds.compute_class_weights().to(device)
     print(f"Class weights: {[f'{w:.2f}' for w in class_weights.tolist()]}", flush=True)
+    print(
+        f"Boundary emphasis: {boundary_emphasis:.2f}  radius: {boundary_radius}"
+        + ("  (disabled)" if boundary_emphasis <= 0.0 else ""),
+        flush=True,
+    )
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
@@ -85,7 +127,6 @@ def train_model(
     model = SignalModel(channels=channels).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights)
 
     best_val_loss = float("inf")
 
@@ -96,13 +137,17 @@ def train_model(
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             logits = model(x)
-            loss = loss_fn(logits, y)
+            loss = _boundary_weighted_loss(
+                logits, y, class_weights, boundary_emphasis, boundary_radius
+            )
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             train_loss += loss.item()
 
-        val_loss = _val_epoch(model, val_loader, loss_fn, device)
+        val_loss = _val_epoch(
+            model, val_loader, class_weights, boundary_emphasis, boundary_radius, device
+        )
         scheduler.step()
 
         print(
@@ -123,7 +168,9 @@ def train_model(
 def _val_epoch(
     model: SignalModel,
     loader: DataLoader,
-    loss_fn: nn.CrossEntropyLoss,
+    class_weights: torch.Tensor,
+    boundary_emphasis: float,
+    boundary_radius: int,
     device: str,
 ) -> float:
     model.eval()
@@ -131,6 +178,8 @@ def _val_epoch(
     with torch.no_grad():
         for x, y in loader:
             x, y = x.to(device), y.to(device)
-            loss = loss_fn(model(x), y)
+            loss = _boundary_weighted_loss(
+                model(x), y, class_weights, boundary_emphasis, boundary_radius
+            )
             total += loss.item()
     return total / max(len(loader), 1)

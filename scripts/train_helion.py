@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--neg-fraction", type=float, default=0.0,
                    help="ratio of hard-negative intergenic windows to genic windows (0=disabled)")
+    p.add_argument("--boundary-emphasis", type=float, default=0.0,
+                   help="upweight loss on positions within +/-radius of a boundary "
+                        "(donor/acceptor/start/stop); 0=disabled, plain mean CE")
+    p.add_argument("--boundary-radius", type=int, default=3,
+                   help="half-width (nt) of the boundary emphasis window")
     return p.parse_args()
 
 
@@ -90,6 +95,8 @@ def main() -> None:
         device=device,
         workers=args.workers,
         neg_fraction=args.neg_fraction,
+        boundary_emphasis=args.boundary_emphasis,
+        boundary_radius=args.boundary_radius,
     )
 
     elapsed = time.time() - t0

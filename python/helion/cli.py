@@ -31,6 +31,13 @@ def main() -> None:
         default=0.0,
         help="Filter assembled gene models below this mean per-exon score (0 = no filter)",
     )
+    pred.add_argument(
+        "--boundary-contrast",
+        type=float,
+        default=0.0,
+        help="Decode-time weight rewarding a sharp coding-signal drop just outside "
+        "exon boundaries, to fight exon over-extension (0 = off)",
+    )
 
     train = subparsers.add_parser("train", help="Train a signal model")
     train.add_argument("annotations", type=Path, help="GFF3 annotation file")
@@ -66,6 +73,7 @@ def main() -> None:
             batch_size=args.batch_size,
             threshold=args.threshold,
             min_gene_score=args.min_gene_score,
+            boundary_contrast=args.boundary_contrast,
         )
     elif args.command == "train":
         from helion.signals.train import train_model

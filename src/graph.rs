@@ -2,6 +2,22 @@ use pyo3::prelude::*;
 
 use crate::constraints::OrganismConstraints;
 
+/// Window (in bases) used on each side of an exon boundary for the
+/// decode-time boundary-contrast probe.
+const CONTRAST_WINDOW: usize = 5;
+
+/// Windowed mean of "codingness" (sum of the 3 coding-frame softmax probs)
+/// over [lo, hi), clamped to the array bounds.
+fn mean_codingness(coding: &[Vec<f32>], lo: usize, hi: usize) -> f32 {
+    let lo = lo.min(coding.len());
+    let hi = hi.min(coding.len());
+    if hi <= lo {
+        return 0.0;
+    }
+    let s: f32 = (lo..hi).map(|p| coding[p][0] + coding[p][1] + coding[p][2]).sum();
+    s / (hi - lo) as f32
+}
+
 #[derive(Clone, Debug)]
 pub struct ExonNode {
     pub start: usize,   // 0-based genomic
@@ -34,6 +50,7 @@ pub fn build(
     sequence: Option<&[u8]>,
     constraints: &OrganismConstraints,
     threshold: f32,
+    boundary_contrast: f32,
 ) -> Dag {
     let seq_len = donor_scores.len();
 
@@ -102,11 +119,23 @@ pub fn build(
 
                 // Donor fires at e, the first intronic base (where it is labeled),
                 // not at e-1. e comes from 0..seq_len so indexing is in bounds.
-                let score = donor_scores[e]
+                let mut score = donor_scores[e]
                     + acceptor_scores[s]
                     + coding_score
                     + homology
                     - mean_intergenic;
+
+                // Decode-time boundary-contrast probe: reward exon boundaries
+                // where the coding signal drops sharply just outside the exon,
+                // so a true (shorter) exon out-scores an over-extended one.
+                if boundary_contrast != 0.0 {
+                    let w = CONTRAST_WINDOW;
+                    let donor_contrast = mean_codingness(coding_scores, e.saturating_sub(w), e)
+                        - mean_codingness(coding_scores, e, e + w);
+                    let acceptor_contrast = mean_codingness(coding_scores, s, s + w)
+                        - mean_codingness(coding_scores, s.saturating_sub(w), s);
+                    score += boundary_contrast * (donor_contrast + acceptor_contrast);
+                }
 
                 nodes.push(ExonNode { start: s, end: e, frame, score, homology });
             }
