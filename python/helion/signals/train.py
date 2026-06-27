@@ -24,6 +24,7 @@ def _boundary_weighted_loss(
     class_weights: torch.Tensor,
     emphasis: float,
     radius: int,
+    exclude_labels: bool = False,
 ) -> torch.Tensor:
     """
     Per-position weighted cross-entropy that upweights boundary neighborhoods.
@@ -44,10 +45,19 @@ def _boundary_weighted_loss(
     cw_y = class_weights[y]  # (B, L) true-class weight at each position
     if emphasis <= 0.0:
         return per_pos.sum() / cw_y.sum().clamp_min(1e-8)
-    is_bnd = (y <= 3).float().unsqueeze(1)  # boundary labels -> (B, 1, L)
-    mask = F.max_pool1d(
-        is_bnd, kernel_size=2 * radius + 1, stride=1, padding=radius
-    ).squeeze(1)  # (B, L)
+    is_bnd = (y <= 3).float()  # boundary labels (donor/acceptor/start/stop) -> (B, L)
+    dilated = F.max_pool1d(
+        is_bnd.unsqueeze(1), kernel_size=2 * radius + 1, stride=1, padding=radius
+    ).squeeze(1)  # (B, L): 1 within +/-radius of any boundary label
+    if exclude_labels:
+        # Emphasize only the coding/intergenic TRANSITION positions adjacent to a
+        # boundary, not the splice/codon labels themselves -- those already carry
+        # large inverse-frequency class weights, and double-weighting them makes
+        # the boundary channels hyperactive (FP explosion at emphasis=5). This
+        # targets the coding->intron cutoff that must turn off sharply.
+        mask = dilated * (1.0 - is_bnd)
+    else:
+        mask = dilated
     w = 1.0 + emphasis * mask
     return (w * per_pos).sum() / (w * cw_y).sum().clamp_min(1e-8)
 
@@ -69,6 +79,7 @@ def train_model(
     neg_fraction: float = 0.0,
     boundary_emphasis: float = 0.0,
     boundary_radius: int = 3,
+    boundary_exclude_labels: bool = False,
 ) -> SignalModel:
     """
     Train a Helion signal model.
@@ -111,7 +122,7 @@ def train_model(
     print(f"Class weights: {[f'{w:.2f}' for w in class_weights.tolist()]}", flush=True)
     print(
         f"Boundary emphasis: {boundary_emphasis:.2f}  radius: {boundary_radius}"
-        + ("  (disabled)" if boundary_emphasis <= 0.0 else ""),
+        + (f"  exclude_labels={boundary_exclude_labels}" if boundary_emphasis > 0.0 else "  (disabled)"),
         flush=True,
     )
 
@@ -138,7 +149,8 @@ def train_model(
             optimizer.zero_grad()
             logits = model(x)
             loss = _boundary_weighted_loss(
-                logits, y, class_weights, boundary_emphasis, boundary_radius
+                logits, y, class_weights, boundary_emphasis, boundary_radius,
+                boundary_exclude_labels,
             )
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -146,7 +158,8 @@ def train_model(
             train_loss += loss.item()
 
         val_loss = _val_epoch(
-            model, val_loader, class_weights, boundary_emphasis, boundary_radius, device
+            model, val_loader, class_weights, boundary_emphasis, boundary_radius,
+            boundary_exclude_labels, device
         )
         scheduler.step()
 
@@ -171,6 +184,7 @@ def _val_epoch(
     class_weights: torch.Tensor,
     boundary_emphasis: float,
     boundary_radius: int,
+    boundary_exclude_labels: bool,
     device: str,
 ) -> float:
     model.eval()
@@ -179,7 +193,8 @@ def _val_epoch(
         for x, y in loader:
             x, y = x.to(device), y.to(device)
             loss = _boundary_weighted_loss(
-                model(x), y, class_weights, boundary_emphasis, boundary_radius
+                model(x), y, class_weights, boundary_emphasis, boundary_radius,
+                boundary_exclude_labels,
             )
             total += loss.item()
     return total / max(len(loader), 1)

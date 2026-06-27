@@ -46,6 +46,10 @@ def parse_args() -> argparse.Namespace:
                         "(donor/acceptor/start/stop); 0=disabled, plain mean CE")
     p.add_argument("--boundary-radius", type=int, default=3,
                    help="half-width (nt) of the boundary emphasis window")
+    p.add_argument("--boundary-exclude-labels", action="store_true",
+                   help="emphasize only the coding/intergenic transition positions next to a "
+                        "boundary, not the splice/codon labels themselves (avoids compounding "
+                        "with the large splice class weights)")
     return p.parse_args()
 
 
@@ -97,6 +101,7 @@ def main() -> None:
         neg_fraction=args.neg_fraction,
         boundary_emphasis=args.boundary_emphasis,
         boundary_radius=args.boundary_radius,
+        boundary_exclude_labels=args.boundary_exclude_labels,
     )
 
     elapsed = time.time() - t0

@@ -32,12 +32,15 @@ EMPHASIS="${EMPHASIS:-5}"
 RADIUS="${RADIUS:-3}"
 EPOCHS="${EPOCHS:-50}"
 MODEL_OUT="${HELION_ROOT}/models/vertebrate_v5${OUT_SUFFIX:-}"
+# EXCLUDE_LABELS=1 emphasizes only the coding->intron transition (not splice labels)
+EXTRA_ARGS=""
+[ "${EXCLUDE_LABELS:-0}" = "1" ] && EXTRA_ARGS="--boundary-exclude-labels"
 CONDA_SH="/storage3/fs1/shandley/Active/echobase/miniforge/etc/profile.d/conda.sh"
 
 echo "Job ID:   ${SLURM_JOB_ID}"
 echo "Node:     ${SLURMD_NODENAME}"
 echo "Started:  $(date)"
-echo "EMPHASIS: ${EMPHASIS}"
+echo "EMPHASIS: ${EMPHASIS}  EXCLUDE_LABELS=${EXCLUDE_LABELS:-0}"
 echo "RADIUS:   ${RADIUS}"
 echo "EPOCHS:   ${EPOCHS}"
 echo "OUTPUT:   ${MODEL_OUT}"
@@ -71,6 +74,7 @@ python "${HELION_ROOT}/scripts/train_helion.py" \
     --neg-fraction 0.5 \
     --boundary-emphasis "${EMPHASIS}" \
     --boundary-radius   "${RADIUS}" \
+    ${EXTRA_ARGS} \
     --device      cuda
 
 echo ""
