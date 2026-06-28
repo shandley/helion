@@ -51,6 +51,7 @@ pub fn build(
     constraints: &OrganismConstraints,
     threshold: f32,
     boundary_contrast: f32,
+    splice_weight: f32,
 ) -> Dag {
     let seq_len = donor_scores.len();
 
@@ -119,8 +120,11 @@ pub fn build(
 
                 // Donor fires at e, the first intronic base (where it is labeled),
                 // not at e-1. e comes from 0..seq_len so indexing is in bounds.
-                let mut score = donor_scores[e]
-                    + acceptor_scores[s]
+                // splice_weight up-weights the (near-exact, ~95% on-base) donor/
+                // acceptor signals relative to the length-averaged coding term, so
+                // the decoder trusts the sharp splice peaks instead of over-
+                // extending the exon to a weaker downstream site.
+                let mut score = splice_weight * (donor_scores[e] + acceptor_scores[s])
                     + coding_score
                     + homology
                     - mean_intergenic;

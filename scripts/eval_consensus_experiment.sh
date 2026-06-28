@@ -63,9 +63,12 @@ python -m pytest tests/test_assembly.py -q
 FA="${H}/results/${DATA}_chr${CHROM}.fa"
 REF="${H}/results/ref_${DATA}_chr${CHROM}.gff3"
 BOUNDARY_CONTRAST="${BOUNDARY_CONTRAST:-0.0}"
+SPLICE_WEIGHT="${SPLICE_WEIGHT:-1.0}"
 BC_TAG=""
 [ "${BOUNDARY_CONTRAST}" != "0.0" ] && BC_TAG="_bc${BOUNDARY_CONTRAST}"
-PRED="${H}/results/pred_${MODEL}_on_${DATA}_chr${CHROM}_t${THRESHOLD}_consensus${BC_TAG}.gff3"
+SW_TAG=""
+[ "${SPLICE_WEIGHT}" != "1.0" ] && SW_TAG="_sw${SPLICE_WEIGHT}"
+PRED="${H}/results/pred_${MODEL}_on_${DATA}_chr${CHROM}_t${THRESHOLD}_consensus${BC_TAG}${SW_TAG}.gff3"
 
 echo ""
 echo "=== helion predict (${MODEL} on ${DATA}_chr${CHROM}, organism=${ORGANISM}, t=${THRESHOLD}) ==="
@@ -77,6 +80,7 @@ helion predict \
     --organism          "${ORGANISM}" \
     --threshold         "${THRESHOLD}" \
     --boundary-contrast "${BOUNDARY_CONTRAST:-0.0}" \
+    --splice-weight     "${SPLICE_WEIGHT:-1.0}" \
     --device            "${DEVICE}"
 echo "Predicted: $(grep -c CDS "${PRED}" 2>/dev/null || echo 0) CDS lines"
 

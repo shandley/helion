@@ -38,6 +38,13 @@ def main() -> None:
         help="Decode-time weight rewarding a sharp coding-signal drop just outside "
         "exon boundaries, to fight exon over-extension (0 = off)",
     )
+    pred.add_argument(
+        "--splice-weight",
+        type=float,
+        default=1.0,
+        help="Weight on donor/acceptor signals in DAG node scoring; >1 trusts the "
+        "near-exact splice peaks over the averaged coding term (fights over-extension)",
+    )
 
     train = subparsers.add_parser("train", help="Train a signal model")
     train.add_argument("annotations", type=Path, help="GFF3 annotation file")
@@ -74,6 +81,7 @@ def main() -> None:
             threshold=args.threshold,
             min_gene_score=args.min_gene_score,
             boundary_contrast=args.boundary_contrast,
+            splice_weight=args.splice_weight,
         )
     elif args.command == "train":
         from helion.signals.train import train_model
