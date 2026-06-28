@@ -25,11 +25,17 @@ H="/storage3/fs1/shandley/Active/helion"
 CONDA_SH="/storage3/fs1/shandley/Active/echobase/miniforge/etc/profile.d/conda.sh"
 THRESHOLD="${THRESHOLD:-0.3}"
 DEVICE="${DEVICE:-cuda}"  # H100 prediction; CPU is ~1.5-2h per chr22, GPU is minutes
-MODEL="${MODEL:-vertebrate_v3}"  # vertebrate_v4 stacks hard-neg FP suppression with the decoder fixes
+MODEL="${MODEL:-vertebrate_v3}"  # weights dir under models/
+# Eval target (decouple from MODEL so a vertebrate-trained model can be tested
+# cross-species without retraining): ORGANISM = decoder constraints, DATA/CHROM
+# = which genome+reference to predict on.
+ORGANISM="${ORGANISM:-vertebrate}"
+DATA="${DATA:-vertebrate}"
+CHROM="${CHROM:-22}"
 
 echo "Job ID:    ${SLURM_JOB_ID}"
 echo "Node:      ${SLURMD_NODENAME}"
-echo "Model:     ${MODEL}"
+echo "Model:     ${MODEL}  Organism: ${ORGANISM}  Data: ${DATA}_chr${CHROM}"
 echo "Threshold: ${THRESHOLD}"
 echo "Device:    ${DEVICE}"
 echo "Started:   $(date)"
@@ -54,21 +60,21 @@ echo ""
 echo "=== assembly tests (gate: consensus filter must behave) ==="
 python -m pytest tests/test_assembly.py -q
 
-FA="${H}/results/vertebrate_chr22.fa"
-REF="${H}/results/ref_vertebrate_chr22.gff3"
+FA="${H}/results/${DATA}_chr${CHROM}.fa"
+REF="${H}/results/ref_${DATA}_chr${CHROM}.gff3"
 BOUNDARY_CONTRAST="${BOUNDARY_CONTRAST:-0.0}"
 BC_TAG=""
 [ "${BOUNDARY_CONTRAST}" != "0.0" ] && BC_TAG="_bc${BOUNDARY_CONTRAST}"
-PRED="${H}/results/pred_${MODEL}_chr22_t${THRESHOLD}_gs0.0_consensus${BC_TAG}.gff3"
+PRED="${H}/results/pred_${MODEL}_on_${DATA}_chr${CHROM}_t${THRESHOLD}_consensus${BC_TAG}.gff3"
 
 echo ""
-echo "=== helion predict (${MODEL} + consensus decoder, chr22, t=${THRESHOLD}) ==="
+echo "=== helion predict (${MODEL} on ${DATA}_chr${CHROM}, organism=${ORGANISM}, t=${THRESHOLD}) ==="
 python3 -c "import torch; print('CUDA available:', torch.cuda.is_available(), '| device:', '${DEVICE}')"
 helion predict \
     "${FA}" \
     "${PRED}" \
     --model             "${H}/models/${MODEL}" \
-    --organism          vertebrate \
+    --organism          "${ORGANISM}" \
     --threshold         "${THRESHOLD}" \
     --boundary-contrast "${BOUNDARY_CONTRAST:-0.0}" \
     --device            "${DEVICE}"
@@ -80,10 +86,13 @@ helion evaluate "${REF}" "${PRED}" "${FA}" --strand-aware
 
 echo ""
 echo "=== recall diagnostic (new consensus prediction) ==="
+GC_FLAG="--allow-gc-donor"
+case "${ORGANISM}" in insect|fungus) GC_FLAG="--no-allow-gc-donor" ;; esac
 python3 "${H}/scripts/recall_diagnostic.py" \
     --ref    "${REF}" \
     --pred   "${PRED}" \
-    --genome "${FA}"
+    --genome "${FA}" \
+    ${GC_FLAG}
 
 echo ""
 echo "Finished: $(date)"
