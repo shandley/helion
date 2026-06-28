@@ -48,6 +48,13 @@ def predict(
     _ = batch_size  # reserved for future batched window inference
     signal_model = SignalModel.load(model_weights, organism=organism, device=device)
 
+    # DNA-embedding fusion: a 10-channel model needs the 6 HyenaDNA offset features
+    # alongside the one-hot input. Load the feature model once if so.
+    feature_model = feature_tokenizer = None
+    if signal_model.in_channels > 4:
+        from helion.features.hyenadna import load_hyenadna
+        feature_model, feature_tokenizer = load_hyenadna(device=device)
+
     embedder = None
     protein_embedding = None
     if protein is not None:
@@ -60,7 +67,11 @@ def predict(
         win_len = len(window.sequence)
 
         for seq, strand in [(window.sequence, "+"), (_reverse_complement(window.sequence), "-")]:
-            scores = signal_model.score(seq)
+            features = None
+            if feature_model is not None:
+                from helion.features.hyenadna import compute_features
+                features = compute_features(seq, feature_model, feature_tokenizer, device=device)
+            scores = signal_model.score(seq, features=features)
 
             homology_scores = None
             if protein_embedding is not None:

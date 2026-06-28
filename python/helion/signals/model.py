@@ -72,10 +72,14 @@ class SignalModel(nn.Module):
     DILATION_SCHEDULE = [1, 2, 4, 8, 16, 32, 64, 1, 2, 4, 8, 16, 32, 64]
 
     def __init__(
-        self, channels: int = 256, kernel_size: int = 11, use_distance_head: bool = False
+        self, channels: int = 256, kernel_size: int = 11, use_distance_head: bool = False,
+        in_channels: int = 4,
     ) -> None:
         super().__init__()
-        self.embed = nn.Conv1d(4, channels, kernel_size=1)
+        # in_channels = 4 (one-hot DNA) by default; 10 when DNA-embedding offset
+        # features are fused in (4 one-hot + 6 HyenaDNA offset-cosine channels).
+        self.in_channels = in_channels
+        self.embed = nn.Conv1d(in_channels, channels, kernel_size=1)
         self.blocks = nn.ModuleList([
             ResidualBlock(channels, kernel_size, d) for d in self.DILATION_SCHEDULE
         ])
@@ -98,9 +102,19 @@ class SignalModel(nn.Module):
         dist = self.dist_head(feat) if self.dist_head is not None else None  # (batch, 2, seq_len)
         return probs, dist
 
-    def score(self, sequence: str) -> SignalScores:
-        """Run inference on a single sequence string, return per-position scores."""
-        x = _one_hot(sequence).unsqueeze(0)  # (1, 4, L)
+    def score(
+        self, sequence: str, features: npt.NDArray[np.float32] | None = None
+    ) -> SignalScores:
+        """Run inference on a single sequence string, return per-position scores.
+
+        `features` is an optional (L, n_extra) DNA-embedding feature track that is
+        concatenated onto the one-hot input (required for fused 10-channel models).
+        """
+        x = _one_hot(sequence)  # (4, L)
+        if features is not None:
+            feat = torch.from_numpy(np.ascontiguousarray(features)).T.float()  # (n_extra, L)
+            x = torch.cat([x, feat], dim=0)
+        x = x.unsqueeze(0)  # (1, in_channels, L)
         device = next(self.parameters()).device
         x = x.to(device)
         with torch.no_grad():
@@ -130,10 +144,12 @@ class SignalModel(nn.Module):
     def load(cls, path: Path, organism: str = "vertebrate", device: str = "cpu") -> SignalModel:
         weights_path = path / "weights.pt"
         state = torch.load(weights_path, map_location=device, weights_only=True)
-        # Auto-detect whether the checkpoint has a distance head so old (v3/v4)
-        # checkpoints load with strict matching and new ones build the head.
+        # Auto-detect the head and input width from the checkpoint so old (v3/v4)
+        # checkpoints load with strict matching and new ones build their head /
+        # fused input conv.
         use_distance_head = any(k.startswith("dist_head") for k in state)
-        model = cls(use_distance_head=use_distance_head)
+        in_channels = state["embed.weight"].shape[1] if "embed.weight" in state else 4
+        model = cls(use_distance_head=use_distance_head, in_channels=in_channels)
         model.load_state_dict(state)
         model.eval()
         return model.to(device)

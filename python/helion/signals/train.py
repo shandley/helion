@@ -101,6 +101,8 @@ def train_model(
     boundary_exclude_labels: bool = False,
     distance_head: bool = False,
     distance_weight: float = 1.0,
+    train_chromosomes: list[str] | None = None,
+    feature_dir: Path | None = None,
 ) -> SignalModel:
     """
     Train a Helion signal model.
@@ -114,16 +116,19 @@ def train_model(
     if val_chromosomes is None:
         val_chromosomes = _DEFAULT_VAL_CHROMS.get(organism, [])
 
+    train_feat = (feature_dir / "train_features.npy") if feature_dir else None
+    val_feat = (feature_dir / "val_features.npy") if feature_dir else None
     if val_chromosomes:
         train_ds = SignalDataset(
             genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="train",
             centered_sampling=True, neg_fraction=neg_fraction,
+            train_chromosomes=train_chromosomes, feature_path=train_feat,
         )
         val_ds = SignalDataset(
             genome, annotations, window_size=window_size, organism=organism,
             val_chromosomes=val_chromosomes, split="val",
-            centered_sampling=False,
+            centered_sampling=False, feature_path=val_feat,
         )
         print(f"Val chromosomes: {val_chromosomes}", flush=True)
         print(f"Train windows: {len(train_ds):,}  Val windows: {len(val_ds):,}", flush=True)
@@ -162,7 +167,11 @@ def train_model(
         flush=True,
     )
 
-    model = SignalModel(channels=channels, use_distance_head=distance_head).to(device)
+    in_channels = 10 if feature_dir is not None else 4
+    print(f"Input channels: {in_channels}" + ("  (one-hot + 6 DNA-embedding features)" if in_channels == 10 else ""), flush=True)
+    model = SignalModel(
+        channels=channels, use_distance_head=distance_head, in_channels=in_channels
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 

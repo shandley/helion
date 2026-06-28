@@ -55,6 +55,11 @@ def parse_args() -> argparse.Namespace:
                         "donor/acceptor) trained with smooth-L1 alongside the classification loss")
     p.add_argument("--distance-weight", type=float, default=1.0,
                    help="weight of the distance regression loss relative to classification")
+    p.add_argument("--train-chromosomes", nargs="*", default=None,
+                   help="restrict training to these chromosomes (cost control for the fusion A/B)")
+    p.add_argument("--feature-dir", type=Path, default=None,
+                   help="dir with train_features.npy / val_features.npy (DNA-embedding fusion; "
+                        "input becomes 10-channel)")
     return p.parse_args()
 
 
@@ -109,6 +114,8 @@ def main() -> None:
         boundary_exclude_labels=args.boundary_exclude_labels,
         distance_head=args.distance_head,
         distance_weight=args.distance_weight,
+        train_chromosomes=args.train_chromosomes,
+        feature_dir=args.feature_dir,
     )
 
     elapsed = time.time() - t0

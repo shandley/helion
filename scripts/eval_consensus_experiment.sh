@@ -38,6 +38,10 @@ echo ""
 source "${CONDA_SH}"
 conda activate echobase-ml
 export PYTHONPATH="${H}/python"
+# For fused 10-channel models, predict loads HyenaDNA from the local HF cache.
+export HF_HOME="${H}/hf_cache"
+export HF_HUB_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
 
 source "$HOME/.cargo/env"
 cd "${H}"

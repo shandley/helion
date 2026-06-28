@@ -38,6 +38,21 @@ def test_model_output_is_probability() -> None:
     assert torch.allclose(sums, torch.ones_like(sums), atol=1e-5)
 
 
+def test_fused_input_channels() -> None:
+    model = SignalModel(channels=32, in_channels=10)
+    model.eval()
+    L = 120
+    x = torch.zeros(1, 10, L)
+    with torch.no_grad():
+        probs, _ = model(x)
+    assert probs.shape == (1, N_CLASSES, L)
+    # score() with a (L, 6) feature track builds the 10-channel input
+    import numpy as np
+    feats = np.zeros((L, 6), dtype=np.float32)
+    scores = model.score("ACGT" * 30, features=feats)
+    assert scores.donor.shape == (L,)
+
+
 def test_distance_head_output_shape() -> None:
     model = SignalModel(channels=32, use_distance_head=True)
     model.eval()

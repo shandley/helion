@@ -126,6 +126,8 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         split: str = "train",
         centered_sampling: bool = False,
         neg_fraction: float = 0.0,
+        train_chromosomes: list[str] | None = None,
+        feature_path: Path | None = None,
     ) -> None:
         self.genome = genome
         self.window_size = window_size
@@ -144,6 +146,12 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         else:
             self.genes = all_genes
 
+        # Optional: restrict TRAIN genes to a chromosome subset (cost control for
+        # the DNA-embedding fusion A/B). Val is left untouched.
+        if train_chromosomes and split == "train":
+            keep = set(train_chromosomes)
+            self.genes = [g for g in self.genes if g.seqid in keep]
+
         self.windows = list(self._build_windows())
         if neg_fraction > 0.0 and split == "train":
             n_neg = max(1, int(len(self.windows) * neg_fraction))
@@ -156,6 +164,28 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
             )
         self._fasta.close()
         del self._fasta
+
+        # Optional DNA-embedding fusion features: a precomputed (N, W, 6) array
+        # index-aligned to self.windows (the window list is deterministic). Loaded
+        # read-only via mmap; concatenated onto the one-hot input in __getitem__.
+        self.features: npt.NDArray[np.float32] | None = None
+        if feature_path is not None:
+            feats = np.load(feature_path, mmap_mode="r")
+            if feats.shape[0] != len(self.windows):
+                raise ValueError(
+                    f"feature cache {feature_path} has {feats.shape[0]} rows but "
+                    f"dataset built {len(self.windows)} windows -- config mismatch"
+                )
+            if feats.shape[1] != self.window_size:
+                raise ValueError(
+                    f"feature cache window {feats.shape[1]} != window_size {self.window_size}"
+                )
+            self.features = feats
+
+    def window_sequences(self) -> list[str]:
+        """The oriented sequence string of every window, in index order (used by
+        the feature-precompute script)."""
+        return [seq for seq, _ in self.windows]
 
     def _build_windows(self) -> Iterator[tuple[str, npt.NDArray[np.int8]]]:
         half = self.window_size // 2
@@ -279,9 +309,14 @@ class SignalDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         seq, labels = self.windows[idx]
+        x = _one_hot(seq)  # (4, L)
+        if self.features is not None:
+            # (L, 6) -> (6, L), concat onto one-hot -> (10, L)
+            feat = torch.from_numpy(np.ascontiguousarray(self.features[idx])).T.float()
+            x = torch.cat([x, feat], dim=0)
         dist = _distance_targets(labels)  # (2, L) normalised to [-1, 1]
         return (
-            _one_hot(seq),
+            x,
             torch.tensor(labels, dtype=torch.long),
             torch.from_numpy(dist),
         )
