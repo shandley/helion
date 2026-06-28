@@ -52,6 +52,7 @@ pub fn build(
     threshold: f32,
     boundary_contrast: f32,
     splice_weight: f32,
+    length_penalty: f32,
 ) -> Dag {
     let seq_len = donor_scores.len();
 
@@ -124,10 +125,14 @@ pub fn build(
                 // acceptor signals relative to the length-averaged coding term, so
                 // the decoder trusts the sharp splice peaks instead of over-
                 // extending the exon to a weaker downstream site.
+                // length_penalty: a per-base cost so an over-extended exon (whose
+                // coding signal bleeds, making it otherwise score-tied with the
+                // true shorter exon) loses on length alone.
                 let mut score = splice_weight * (donor_scores[e] + acceptor_scores[s])
                     + coding_score
                     + homology
-                    - mean_intergenic;
+                    - mean_intergenic
+                    - length_penalty * exon_len as f32;
 
                 // Decode-time boundary-contrast probe: reward exon boundaries
                 // where the coding signal drops sharply just outside the exon,

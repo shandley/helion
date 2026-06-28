@@ -22,6 +22,7 @@ pub use viterbi::GeneModel;
     threshold = 0.1,
     boundary_contrast = 0.0,
     splice_weight = 1.0,
+    length_penalty = 0.0,
 ))]
 fn build_dag(
     donor_scores: Vec<f32>,
@@ -36,6 +37,7 @@ fn build_dag(
     threshold: f32,
     boundary_contrast: f32,
     splice_weight: f32,
+    length_penalty: f32,
 ) -> PyResult<graph::PyDag> {
     let constraints = constraints::OrganismConstraints::for_organism(organism);
     let seq_bytes = sequence.as_ref().map(|s| s.as_bytes());
@@ -52,6 +54,7 @@ fn build_dag(
         threshold,
         boundary_contrast,
         splice_weight,
+        length_penalty,
     );
     Ok(graph::PyDag(dag))
 }

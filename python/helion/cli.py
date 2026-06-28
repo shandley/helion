@@ -45,6 +45,13 @@ def main() -> None:
         help="Weight on donor/acceptor signals in DAG node scoring; >1 trusts the "
         "near-exact splice peaks over the averaged coding term (fights over-extension)",
     )
+    pred.add_argument(
+        "--length-penalty",
+        type=float,
+        default=0.0,
+        help="Per-base penalty on exon length in DAG node scoring, to discourage "
+        "exon over-extension when the coding signal bleeds past the true boundary",
+    )
 
     train = subparsers.add_parser("train", help="Train a signal model")
     train.add_argument("annotations", type=Path, help="GFF3 annotation file")
@@ -82,6 +89,7 @@ def main() -> None:
             min_gene_score=args.min_gene_score,
             boundary_contrast=args.boundary_contrast,
             splice_weight=args.splice_weight,
+            length_penalty=args.length_penalty,
         )
     elif args.command == "train":
         from helion.signals.train import train_model

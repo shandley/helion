@@ -42,6 +42,7 @@ def predict(
     min_gene_score: float = 0.0,
     boundary_contrast: float = 0.0,
     splice_weight: float = 1.0,
+    length_penalty: float = 0.0,
 ) -> list[PyGeneModel]:
     from helion._core import PyGeneModel as _PyGeneModel
     from helion._core import build_dag, viterbi_decode
@@ -91,6 +92,7 @@ def predict(
                 threshold=threshold,
                 boundary_contrast=boundary_contrast,
                 splice_weight=splice_weight,
+                length_penalty=length_penalty,
             )
 
             models = viterbi_decode(dag, strand)
