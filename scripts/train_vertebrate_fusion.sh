@@ -23,7 +23,7 @@ set -euo pipefail
 H="/storage3/fs1/shandley/Active/helion"
 CONDA_SH="/storage3/fs1/shandley/Active/echobase/miniforge/etc/profile.d/conda.sh"
 DATA_DIR="${H}/data/vertebrate"
-TRAIN_CHROMS="${TRAIN_CHROMS:-19 20 21}"
+TRAIN_CHROMS="${TRAIN_CHROMS:-19}"
 EPOCHS="${EPOCHS:-15}"
 MODEL_OUT="${H}/models/vertebrate_fusion${OUT_SUFFIX:-_ctrl}"
 

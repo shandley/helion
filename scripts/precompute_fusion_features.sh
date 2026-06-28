@@ -20,7 +20,7 @@ set -euo pipefail
 H="/storage3/fs1/shandley/Active/helion"
 CONDA_SH="/storage3/fs1/shandley/Active/echobase/miniforge/etc/profile.d/conda.sh"
 DATA_DIR="${H}/data/vertebrate"
-TRAIN_CHROMS="${TRAIN_CHROMS:-19 20 21}"
+TRAIN_CHROMS="${TRAIN_CHROMS:-19}"
 FEATURE_DIR="${FEATURE_DIR:-${H}/features/vertebrate_fusion}"
 
 export HF_HOME="${H}/hf_cache"
